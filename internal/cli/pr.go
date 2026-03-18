@@ -131,7 +131,7 @@ var prCmd = &cobra.Command{
 
 		// Run interactively to stream output to the user
 		argv := []string{"bash", "-lc", script}
-		if err := docker.ExecInteractive(name, workdir, nil, argv); err != nil {
+		if err := docker.ExecInteractive(name, workdir, imgCfg.EffectiveUser(), nil, argv); err != nil {
 			return fmt.Errorf("container: failed to checkout PR and migrate: %w", err)
 		}
 		return nil

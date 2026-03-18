@@ -128,9 +128,11 @@ var runAgentCmd = &cobra.Command{
 
 		// Copy configured files (auth, etc.) into the container as in `enter`,
 		// but scoped to the requested agent when configured.
-		copyConfiguredFiles(cmd, cfg, name, workdir, agent)
+		user := imgCfg.EffectiveUser()
 
-		envs := buildAgentEnv(cfg, agent, cmd)
+		copyConfiguredFiles(cmd, cfg, name, workdir, user, agent)
+
+		envs := buildAgentEnv(cfg, agent, user, cmd)
 
 		rawArgs := []string{}
 		rest := args[1:]
@@ -189,7 +191,7 @@ var runAgentCmd = &cobra.Command{
 			// If this is a pure help request, capture output via non-TTY exec
 			if isHelpArgs(rawArgs) {
 				shellCmd := withUserPaths(shellJoin(argv))
-				out, err := docker.ExecOutput(name, workdir, envs, []string{"bash", "-lc", shellCmd})
+				out, err := docker.ExecOutput(name, workdir, user, envs, []string{"bash", "-lc", shellCmd})
 				if err != nil {
 					fmt.Fprint(cmd.ErrOrStderr(), out)
 					return err
@@ -220,10 +222,10 @@ var runAgentCmd = &cobra.Command{
 				Workdir:       workdir,
 				Envs:          envs,
 				Argv:          []string{"bash", "-lc", shellCmd},
-				User:          "discourse",
+				User:          user,
 			})
 		}
-		return docker.ExecInteractive(name, workdir, envs, []string{"bash", "-lc", shellCmd})
+		return docker.ExecInteractive(name, workdir, user, envs, []string{"bash", "-lc", shellCmd})
 	},
 }
 
@@ -246,7 +248,7 @@ func collectPromptInteractive(cmd *cobra.Command) (string, error) {
 	return strings.TrimSpace(pm.ta.Value()), nil
 }
 
-func buildAgentEnv(cfg config.Config, agent string, cmd *cobra.Command) docker.Envs {
+func buildAgentEnv(cfg config.Config, agent, user string, cmd *cobra.Command) docker.Envs {
 	if agent == "ccr" {
 		envs := make(docker.Envs, 0, 4)
 		if _, ok := os.LookupEnv("TERM"); ok {
@@ -283,7 +285,7 @@ func buildAgentEnv(cfg config.Config, agent string, cmd *cobra.Command) docker.E
 	// Ensure a sane runtime environment for discourse user
 	envs = append(envs,
 		"HOME=/home/discourse",
-		"USER=discourse",
+		"USER="+user,
 		"SHELL=/bin/bash",
 	)
 	return envs

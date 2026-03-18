@@ -33,7 +33,7 @@ var runCmd = &cobra.Command{
 		if asRoot {
 			return docker.ExecInteractiveAsRoot(ctx.name, ctx.workdir, ctx.envs, finalArgs)
 		}
-		return docker.ExecInteractive(ctx.name, ctx.workdir, ctx.envs, finalArgs)
+		return docker.ExecInteractive(ctx.name, ctx.workdir, ctx.user, ctx.envs, finalArgs)
 	},
 }
 

@@ -95,6 +95,9 @@ var imageShowCmd = &cobra.Command{
 			return fmt.Errorf("unknown image '%s'", name)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "name: %s\nkind: %s\ntag: %s\nworkdir: %s\ncontainerPort: %d\n", name, img.Kind, img.Tag, img.Workdir, img.ContainerPort)
+		if img.User != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "user: %s\n", img.User)
+		}
 		switch img.Dockerfile.Source {
 		case "stock":
 			fmt.Fprintf(cmd.OutOrStdout(), "dockerfile: stock(%s)\n", img.Dockerfile.StockName)
@@ -176,12 +179,14 @@ var imageAddCmd = &cobra.Command{
 		if cfg.Images == nil {
 			cfg.Images = map[string]config.ImageConfig{}
 		}
+		userFlag, _ := cmd.Flags().GetString("user")
 		cfg.Images[name] = config.ImageConfig{
 			Kind:          kind,
 			Tag:           tag,
 			Workdir:       workdir,
 			ContainerPort: port,
 			Dockerfile:    src,
+			User:          strings.TrimSpace(userFlag),
 		}
 		if cfg.SelectedImage == "" {
 			cfg.SelectedImage = name
@@ -315,6 +320,11 @@ var imageSetCmd = &cobra.Command{
 			}
 		}
 
+		if cmd.Flags().Changed("user") {
+			v, _ := cmd.Flags().GetString("user")
+			img.User = strings.TrimSpace(v)
+		}
+
 		cfg.Images[name] = img
 		if err := config.Save(configDir, cfg); err != nil {
 			return err
@@ -338,10 +348,12 @@ func init() {
 	imageAddCmd.Flags().String("tag", "", "Docker image tag")
 	imageAddCmd.Flags().String("workdir", "", "Working directory inside the container")
 	imageAddCmd.Flags().Int("container-port", 0, "Container port to expose")
+	imageAddCmd.Flags().String("user", "", "Container user for exec/chown operations (default: discourse)")
 
 	imageSetCmd.Flags().String("tag", "", "Docker image tag")
 	imageSetCmd.Flags().String("workdir", "", "Working directory inside the container")
 	imageSetCmd.Flags().Int("container-port", 0, "Container port to expose")
 	imageSetCmd.Flags().String("stock", "", "Switch dockerfile source to the stock Discourse image")
 	imageSetCmd.Flags().String("dockerfile", "", "Switch dockerfile source to a custom Dockerfile path")
+	imageSetCmd.Flags().String("user", "", "Container user for exec/chown operations (empty to clear)")
 }

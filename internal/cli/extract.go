@@ -74,6 +74,7 @@ Use 'dv extract plugin <name>' or 'dv extract theme <name>' for tab completion.`
 			return err
 		}
 		work := config.EffectiveWorkdir(cfg, imgCfg, name)
+		user := imgCfg.EffectiveUser()
 
 		// If a path argument is provided, extract that specific path
 		if len(args) > 0 {
@@ -86,7 +87,7 @@ Use 'dv extract plugin <name>' or 'dv extract theme <name>' for tab completion.`
 				extractPath = path.Join(imgCfg.Workdir, extractPath)
 			}
 			// Verify path exists in container
-			existsOut, err := docker.ExecOutput(name, "/", nil, []string{"bash", "-lc", fmt.Sprintf("[ -d %q ] && echo OK || echo MISSING", extractPath)})
+			existsOut, err := docker.ExecOutput(name, "/", user, nil, []string{"bash", "-lc", fmt.Sprintf("[ -d %q ] && echo OK || echo MISSING", extractPath)})
 			if err != nil || !strings.Contains(existsOut, "OK") {
 				return fmt.Errorf("path '%s' not found in container", extractPath)
 			}
@@ -102,6 +103,7 @@ Use 'dv extract plugin <name>' or 'dv extract theme <name>' for tab completion.`
 				cmd:              cmd,
 				containerName:    name,
 				containerWorkdir: extractPath,
+				user:             user,
 				localRepo:        localRepo,
 				branchName:       base,
 				displayName:      display,
@@ -131,6 +133,7 @@ Use 'dv extract plugin <name>' or 'dv extract theme <name>' for tab completion.`
 				cmd:              cmd,
 				containerName:    name,
 				containerWorkdir: work,
+				user:             user,
 				localRepo:        localRepo,
 				branchName:       name,
 				displayName:      display,
@@ -141,7 +144,7 @@ Use 'dv extract plugin <name>' or 'dv extract theme <name>' for tab completion.`
 			})
 		}
 		// Check for changes
-		status, err := docker.ExecOutput(name, work, nil, []string{"bash", "-lc", "git status --porcelain"})
+		status, err := docker.ExecOutput(name, work, user, nil, []string{"bash", "-lc", "git status --porcelain"})
 		if err != nil {
 			return err
 		}
@@ -174,6 +177,7 @@ Use 'dv extract plugin <name>' or 'dv extract theme <name>' for tab completion.`
 			cleanup, err := registerExtractSync(cmd, syncOptions{
 				containerName:    name,
 				containerWorkdir: work,
+				user:             user,
 				localRepo:        localRepo,
 				logOut:           logOut,
 				errOut:           cmd.ErrOrStderr(),
@@ -206,12 +210,12 @@ Use 'dv extract plugin <name>' or 'dv extract theme <name>' for tab completion.`
 		}
 
 		// Get container commit and branch
-		commit, err := docker.ExecOutput(name, work, nil, []string{"bash", "-lc", "git rev-parse HEAD"})
+		commit, err := docker.ExecOutput(name, work, user, nil, []string{"bash", "-lc", "git rev-parse HEAD"})
 		if err != nil {
 			return err
 		}
 		commit = strings.TrimSpace(commit)
-		containerBranch, err := docker.ExecOutput(name, work, nil, []string{"bash", "-lc", "git rev-parse --abbrev-ref HEAD"})
+		containerBranch, err := docker.ExecOutput(name, work, user, nil, []string{"bash", "-lc", "git rev-parse --abbrev-ref HEAD"})
 		if err != nil {
 			return err
 		}
@@ -242,7 +246,7 @@ Use 'dv extract plugin <name>' or 'dv extract theme <name>' for tab completion.`
 		} else {
 			// Commit missing - try to fetch from container first (handles rebased commits)
 			ctx := cmd.Context()
-			syncErr := syncFromContainer(ctx, name, work, localRepo, commit, logOut, syncDebug)
+			syncErr := syncFromContainer(ctx, name, work, user, localRepo, commit, logOut, syncDebug)
 			if syncErr == nil && commitExistsInRepo(localRepo, commit) {
 				// Sync succeeded and commit now exists - do normal checkout
 				if containerBranch != "" && containerBranch != "HEAD" {
@@ -345,6 +349,7 @@ Use 'dv extract plugin <name>' or 'dv extract theme <name>' for tab completion.`
 			return runExtractSync(cmd, syncOptions{
 				containerName:    name,
 				containerWorkdir: work,
+				user:             user,
 				localRepo:        localRepo,
 				logOut:           logOut,
 				errOut:           cmd.ErrOrStderr(),

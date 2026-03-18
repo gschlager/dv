@@ -116,9 +116,22 @@ Press Ctrl+C to stop exposing.`,
 			fmt.Fprintf(cmd.OutOrStdout(), "[verbose] Will proxy %s:%d -> %s\n", ips[0], availablePort, targetAddr)
 		}
 
+		// Resolve user from image config
+		imgName := cfg.ContainerImages[name]
+		var user string
+		if imgName != "" {
+			if imgCfg, ok := cfg.Images[imgName]; ok {
+				user = imgCfg.EffectiveUser()
+			} else {
+				user = "discourse"
+			}
+		} else {
+			user = "discourse"
+		}
+
 		// Query Discourse hostname for URL rewriting
 		fmt.Fprint(cmd.OutOrStdout(), "Querying Discourse hostname... ")
-		discourseHostname, err := getDiscourseHostname(name, verbose, cmd.OutOrStdout())
+		discourseHostname, err := getDiscourseHostname(name, user, verbose, cmd.OutOrStdout())
 		if err != nil {
 			fmt.Fprintln(cmd.OutOrStdout(), "failed")
 			return fmt.Errorf("failed to get Discourse hostname: %w", err)
@@ -190,11 +203,11 @@ func init() {
 }
 
 // getDiscourseHostname queries the Discourse container for its current hostname
-func getDiscourseHostname(name string, verbose bool, out io.Writer) (string, error) {
+func getDiscourseHostname(name, user string, verbose bool, out io.Writer) (string, error) {
 	if verbose {
 		fmt.Fprintln(out, "[verbose] Querying Discourse hostname...")
 	}
-	hostname, err := docker.ExecOutput(name, "/var/www/discourse", nil, []string{
+	hostname, err := docker.ExecOutput(name, "/var/www/discourse", user, nil, []string{
 		"bin/rails", "runner", "puts Discourse.current_hostname",
 	})
 	if err != nil {

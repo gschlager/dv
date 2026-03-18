@@ -51,7 +51,17 @@ for d in /home/discourse/*/; do
   fi
 done
 `
-		out, err := docker.ExecOutput(name, "/home/discourse", nil, []string{"bash", "-lc", script})
+		imgName := cfg.ContainerImages[name]
+		var compUser string
+		if imgName != "" {
+			if ic, ok := cfg.Images[imgName]; ok {
+				compUser = ic.EffectiveUser()
+			}
+		}
+		if compUser == "" {
+			compUser = "discourse"
+		}
+		out, err := docker.ExecOutput(name, "/home/discourse", compUser, nil, []string{"bash", "-lc", script})
 		if err != nil {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
@@ -110,9 +120,21 @@ done
 			return fmt.Errorf("container '%s' is not running; run 'dv start' first", name)
 		}
 
+		// Resolve user from image config
+		imgName := cfg.ContainerImages[name]
+		var themeUser string
+		if imgName != "" {
+			if ic, ok := cfg.Images[imgName]; ok {
+				themeUser = ic.EffectiveUser()
+			}
+		}
+		if themeUser == "" {
+			themeUser = "discourse"
+		}
+
 		// Verify theme directory exists
 		themePath := filepath.Join("/home/discourse", themeName)
-		existsOut, err := docker.ExecOutput(name, "/home/discourse", nil, []string{"bash", "-lc", fmt.Sprintf("[ -d %q ] && echo OK || echo MISSING", themePath)})
+		existsOut, err := docker.ExecOutput(name, "/home/discourse", themeUser, nil, []string{"bash", "-lc", fmt.Sprintf("[ -d %q ] && echo OK || echo MISSING", themePath)})
 		if err != nil || !strings.Contains(existsOut, "OK") {
 			return fmt.Errorf("theme '%s' not found at %s", themeName, themePath)
 		}
@@ -127,6 +149,7 @@ done
 			cmd:              cmd,
 			containerName:    name,
 			containerWorkdir: themePath,
+			user:             themeUser,
 			localRepo:        localRepo,
 			branchName:       themeName,
 			displayName:      display,

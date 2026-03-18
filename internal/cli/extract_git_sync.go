@@ -24,6 +24,7 @@ type gitSyncer struct {
 	ctx           context.Context
 	containerName string
 	workdir       string
+	user          string
 	localRepo     string
 	logOut        io.Writer
 	errOut        io.Writer
@@ -31,11 +32,12 @@ type gitSyncer struct {
 }
 
 // newGitSyncer creates a new git synchronizer
-func newGitSyncer(ctx context.Context, containerName, workdir, localRepo string, logOut, errOut io.Writer, debug bool) *gitSyncer {
+func newGitSyncer(ctx context.Context, containerName, workdir, user, localRepo string, logOut, errOut io.Writer, debug bool) *gitSyncer {
 	return &gitSyncer{
 		ctx:           ctx,
 		containerName: containerName,
 		workdir:       workdir,
+		user:          user,
 		localRepo:     localRepo,
 		logOut:        logOut,
 		errOut:        errOut,
@@ -212,7 +214,7 @@ func (g *gitSyncer) applyBundle(bundlePath string, state gitSyncState) error {
 
 	// Copy bundle to container
 	containerBundle := "/tmp/dv-gitsync.bundle"
-	if err := docker.CopyToContainerWithOwnership(g.containerName, bundlePath, containerBundle, false); err != nil {
+	if err := docker.CopyToContainerWithOwnership(g.containerName, bundlePath, containerBundle, g.user, false); err != nil {
 		return fmt.Errorf("copying bundle to container: %w", err)
 	}
 
@@ -223,7 +225,7 @@ func (g *gitSyncer) applyBundle(bundlePath string, state gitSyncState) error {
 	}
 
 	// Clean up bundle in container
-	docker.ExecOutput(g.containerName, "/", nil, []string{"rm", "-f", containerBundle})
+	docker.ExecOutput(g.containerName, "/", g.user, nil, []string{"rm", "-f", containerBundle})
 
 	return nil
 }
@@ -259,7 +261,7 @@ func (g *gitSyncer) hostGitOutput(args ...string) (string, error) {
 // containerGitOutput runs a git command in the container and returns output
 func (g *gitSyncer) containerGitOutput(args ...string) (string, error) {
 	fullArgs := append([]string{"git"}, args...)
-	out, err := docker.ExecOutput(g.containerName, g.workdir, nil, fullArgs)
+	out, err := docker.ExecOutput(g.containerName, g.workdir, g.user, nil, fullArgs)
 	return strings.TrimSpace(out), err
 }
 
@@ -275,7 +277,7 @@ func (g *gitSyncer) debugf(format string, args ...interface{}) {
 // has commits (e.g., from a rebase) that don't exist in the host repo.
 // Returns nil on success, error on failure. Failure is non-fatal - caller should
 // fall back to existing behavior.
-func syncFromContainer(ctx context.Context, containerName, workdir, localRepo string,
+func syncFromContainer(ctx context.Context, containerName, workdir, user, localRepo string,
 	containerHead string, logOut io.Writer, debug bool) error {
 
 	debugf := func(format string, args ...interface{}) {
@@ -289,7 +291,7 @@ func syncFromContainer(ctx context.Context, containerName, workdir, localRepo st
 	var baseRef string
 	for _, candidate := range []string{"origin/main", "origin/master", "origin/HEAD"} {
 		// Check if ref exists in container
-		out, err := docker.ExecOutput(containerName, workdir, nil, []string{"git", "rev-parse", "--verify", "--quiet", candidate})
+		out, err := docker.ExecOutput(containerName, workdir, user, nil, []string{"git", "rev-parse", "--verify", "--quiet", candidate})
 		if err != nil || strings.TrimSpace(out) == "" {
 			continue
 		}
@@ -312,7 +314,7 @@ func syncFromContainer(ctx context.Context, containerName, workdir, localRepo st
 	// (using containerHead rather than HEAD to avoid drift if container state changes)
 	containerBundle := "/tmp/dv-extract-sync.bundle"
 	bundleArgs := []string{"git", "bundle", "create", containerBundle, "^" + baseRef, containerHead}
-	out, err := docker.ExecOutput(containerName, workdir, nil, bundleArgs)
+	out, err := docker.ExecOutput(containerName, workdir, user, nil, bundleArgs)
 	if err != nil {
 		return fmt.Errorf("git bundle create in container: %w: %s", err, out)
 	}
@@ -322,7 +324,7 @@ func syncFromContainer(ctx context.Context, containerName, workdir, localRepo st
 	tmpFile, err := os.CreateTemp("", "dv-extract-sync-*.bundle")
 	if err != nil {
 		// Clean up container bundle
-		docker.ExecOutput(containerName, "/", nil, []string{"rm", "-f", containerBundle})
+		docker.ExecOutput(containerName, "/", user, nil, []string{"rm", "-f", containerBundle})
 		return fmt.Errorf("creating temp file: %w", err)
 	}
 	hostBundle := tmpFile.Name()
@@ -330,12 +332,12 @@ func syncFromContainer(ctx context.Context, containerName, workdir, localRepo st
 	defer os.Remove(hostBundle)
 
 	if err := docker.CopyFromContainer(containerName, containerBundle, hostBundle); err != nil {
-		docker.ExecOutput(containerName, "/", nil, []string{"rm", "-f", containerBundle})
+		docker.ExecOutput(containerName, "/", user, nil, []string{"rm", "-f", containerBundle})
 		return fmt.Errorf("copying bundle from container: %w", err)
 	}
 
 	// Clean up container bundle
-	docker.ExecOutput(containerName, "/", nil, []string{"rm", "-f", containerBundle})
+	docker.ExecOutput(containerName, "/", user, nil, []string{"rm", "-f", containerBundle})
 
 	// Fetch bundle into host repo
 	fetchCmd := exec.CommandContext(ctx, "git", "fetch", hostBundle)

@@ -148,6 +148,7 @@ var newCmd = &cobra.Command{
 		}
 		imageTag := imgCfg.Tag
 		workdir := imgCfg.Workdir
+		user := imgCfg.EffectiveUser()
 
 		sshAuthSock := ""
 		if tpl != nil && tpl.Git.SSHForward {
@@ -218,7 +219,7 @@ var newCmd = &cobra.Command{
 				tpl.Discourse.Branch = branchFlag
 			}
 
-			if err = executeTemplate(cmd, cfg, name, workdir, tpl, sshAuthSock, verbose); err != nil {
+			if err = executeTemplate(cmd, cfg, name, workdir, user, tpl, sshAuthSock, verbose); err != nil {
 				return err
 			}
 		}
@@ -238,7 +239,7 @@ func confirmInvalidRailsHostname(cmd *cobra.Command, name string) (bool, error) 
 	return promptYesNo(cmd.InOrStdin(), errOut, "Continue anyway? (y/N): ")
 }
 
-func checkoutPR(cmd *cobra.Command, cfg config.Config, name, workdir string, prNumber int, envs docker.Envs) error {
+func checkoutPR(cmd *cobra.Command, cfg config.Config, name, workdir, user string, prNumber int, envs docker.Envs) error {
 	owner, repo := prSearchOwnerRepoFromContainer(cfg, name)
 	if owner == "" || repo == "" {
 		owner, repo = ownerRepoFromURL(cfg.DiscourseRepo)
@@ -253,10 +254,10 @@ func checkoutPR(cmd *cobra.Command, cfg config.Config, name, workdir string, prN
 	branchName := prDetail.Head.Ref
 	checkoutCmds := buildPRCheckoutCommands(prNumber, branchName)
 	script := buildDiscourseResetScript(checkoutCmds, discourseResetScriptOpts{})
-	return docker.ExecInteractive(name, workdir, envs, []string{"bash", "-lc", script})
+	return docker.ExecInteractive(name, workdir, user, envs, []string{"bash", "-lc", script})
 }
 
-func checkoutBranch(cmd *cobra.Command, cfg config.Config, name, workdir, branchName string, envs docker.Envs) error {
+func checkoutBranch(cmd *cobra.Command, cfg config.Config, name, workdir, user, branchName string, envs docker.Envs) error {
 	if branchName == "main" || branchName == "master" {
 		fmt.Fprintf(cmd.OutOrStdout(), "Updating %s branch...\n", branchName)
 		script := fmt.Sprintf(`
@@ -266,11 +267,11 @@ git checkout %s > /tmp/dv-git-checkout.log 2>&1
 echo "Pulling latest..."
 git pull > /tmp/dv-git-pull.log 2>&1
 `, branchName, branchName)
-		return docker.ExecInteractive(name, workdir, envs, []string{"bash", "-lc", script})
+		return docker.ExecInteractive(name, workdir, user, envs, []string{"bash", "-lc", script})
 	}
 	checkoutCmds := buildBranchCheckoutCommands(branchName)
 	script := buildDiscourseResetScript(checkoutCmds, discourseResetScriptOpts{})
-	return docker.ExecInteractive(name, workdir, envs, []string{"bash", "-lc", script})
+	return docker.ExecInteractive(name, workdir, user, envs, []string{"bash", "-lc", script})
 }
 
 func uniqueAgentName(base string) string {
@@ -284,7 +285,7 @@ func uniqueAgentName(base string) string {
 	return name
 }
 
-func runMaintenance(cmd *cobra.Command, name, workdir string, envList docker.Envs) error {
+func runMaintenance(cmd *cobra.Command, name, workdir, user string, envList docker.Envs) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "Running maintenance (bundle, migrate)...\n")
 	script := `
 set -e
@@ -307,10 +308,10 @@ RAILS_ENV=test bin/rake db:migrate > $FAILED_LOG 2>&1
 
 echo "Maintenance successful."
 `
-	return docker.ExecInteractive(name, workdir, envList, []string{"bash", "-lc", script})
+	return docker.ExecInteractive(name, workdir, user, envList, []string{"bash", "-lc", script})
 }
 
-func executeTemplate(cmd *cobra.Command, cfg config.Config, name, workdir string, tpl *templateConfig, sshAuthSock string, verbose bool) (err error) {
+func executeTemplate(cmd *cobra.Command, cfg config.Config, name, workdir, user string, tpl *templateConfig, sshAuthSock string, verbose bool) (err error) {
 	// 1. Env variables
 	envList := collectEnvPassthrough(cfg)
 	if len(tpl.Env) > 0 {
@@ -334,7 +335,7 @@ mkdir -p ~/.ssh
 chmod 700 ~/.ssh
 ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
 `
-		if _, err := docker.ExecOutput(name, workdir, nil, []string{"bash", "-lc", sshSetup}); err != nil {
+		if _, err := docker.ExecOutput(name, workdir, user, nil, []string{"bash", "-lc", sshSetup}); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to setup SSH known_hosts: %v\n", err)
 		}
 	}
@@ -342,7 +343,7 @@ ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
 	// 2. Maintenance Mode: Stop Services
 	fmt.Fprintf(cmd.OutOrStdout(), "Stopping services for provisioning...\n")
 	stopScript := "sudo /usr/bin/sv force-stop unicorn ember-cli || true"
-	if _, err := docker.ExecOutput(name, workdir, nil, []string{"bash", "-lc", stopScript}); err != nil {
+	if _, err := docker.ExecOutput(name, workdir, user, nil, []string{"bash", "-lc", stopScript}); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to stop services: %v\n", err)
 	}
 
@@ -350,18 +351,18 @@ ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
 	defer func() {
 		fmt.Fprintf(cmd.OutOrStdout(), "Starting services (cleanup)...\n")
 		startScript := "sudo /usr/bin/sv start unicorn ember-cli || true"
-		_, _ = docker.ExecOutput(name, workdir, nil, []string{"bash", "-lc", startScript})
+		_, _ = docker.ExecOutput(name, workdir, user, nil, []string{"bash", "-lc", startScript})
 	}()
 
 	// 3. Discourse branch/PR foundation
 	if tpl.Discourse.PR != 0 {
 		fmt.Fprintf(cmd.OutOrStdout(), "Checking out PR %d...\n", tpl.Discourse.PR)
-		if err := checkoutPR(cmd, cfg, name, workdir, tpl.Discourse.PR, envList); err != nil {
+		if err := checkoutPR(cmd, cfg, name, workdir, user, tpl.Discourse.PR, envList); err != nil {
 			return err
 		}
 	} else if tpl.Discourse.Branch != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "Checking out branch %s...\n", tpl.Discourse.Branch)
-		if err := checkoutBranch(cmd, cfg, name, workdir, tpl.Discourse.Branch, envList); err != nil {
+		if err := checkoutBranch(cmd, cfg, name, workdir, user, tpl.Discourse.Branch, envList); err != nil {
 			return err
 		}
 	}
@@ -371,7 +372,7 @@ ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
 		// Test SSH connectivity inside container
 		fmt.Fprintf(cmd.OutOrStdout(), "Testing SSH inside container...\n")
 		testCmd := "echo \"SSH_AUTH_SOCK=$SSH_AUTH_SOCK\"; ls -la $SSH_AUTH_SOCK 2>&1 || echo 'Socket not found'; ssh -T -o BatchMode=yes -o ConnectTimeout=5 git@github.com 2>&1 || true"
-		_ = docker.ExecInteractive(name, workdir, envList, []string{"bash", "-lc", testCmd})
+		_ = docker.ExecInteractive(name, workdir, user, envList, []string{"bash", "-lc", testCmd})
 	}
 	for _, p := range tpl.Plugins {
 		pPath := p.Path
@@ -383,7 +384,7 @@ ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
 		if p.Branch != "" {
 			cloneCmd = fmt.Sprintf("git clone -b %s %s %s", shellQuote(p.Branch), shellQuote(p.Repo), shellQuote(pPath))
 		}
-		if err := docker.ExecInteractive(name, workdir, envList, []string{"bash", "-lc", cloneCmd}); err != nil {
+		if err := docker.ExecInteractive(name, workdir, user, envList, []string{"bash", "-lc", cloneCmd}); err != nil {
 			return fmt.Errorf("failed to clone plugin %s: %w", p.Repo, err)
 		}
 	}
@@ -401,7 +402,7 @@ ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
 
 		for _, hostPath := range expandedHostPaths {
 			fmt.Fprintf(cmd.OutOrStdout(), "Copying %s to %s...\n", hostPath, rule.Container)
-			if err := copyHostToContainer(hostPath, rule.Container, name, verbose); err != nil {
+			if err := copyHostToContainer(hostPath, rule.Container, name, user, verbose); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to copy %s: %v\n", hostPath, err)
 			}
 		}
@@ -409,20 +410,20 @@ ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
 
 	// 5. Maintenance (Bundle and Migrate)
 	// Now that core is foundation-ed and plugins are cloned, we bundle and migrate.
-	if err := runMaintenance(cmd, name, workdir, envList); err != nil {
+	if err := runMaintenance(cmd, name, workdir, user, envList); err != nil {
 		return err
 	}
 
 	// 6. Start Services and Wait for Health
 	fmt.Fprintf(cmd.OutOrStdout(), "Provisioning complete. Starting Discourse and waiting for it to be ready...\n")
 	startScript := "sudo /usr/bin/sv start unicorn ember-cli || true"
-	if _, err = docker.ExecOutput(name, workdir, nil, []string{"bash", "-lc", startScript}); err != nil {
+	if _, err = docker.ExecOutput(name, workdir, user, nil, []string{"bash", "-lc", startScript}); err != nil {
 		return fmt.Errorf("failed to start services: %w", err)
 	}
 
 	// Wait for health check (max 120s)
 	healthCmd := "timeout 120 bash -c 'until curl -s -f http://localhost:4200/srv/status > /dev/null 2>&1; do sleep 2; done' || exit 1"
-	if _, err = docker.ExecOutput(name, workdir, nil, []string{"bash", "-lc", healthCmd}); err != nil {
+	if _, err = docker.ExecOutput(name, workdir, user, nil, []string{"bash", "-lc", healthCmd}); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: Discourse did not become healthy within 120s. Some settings might fail.\n")
 	} else {
 		fmt.Fprintf(cmd.OutOrStdout(), "Discourse is ready.\n")
@@ -474,11 +475,11 @@ ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
 			actualCmd = fmt.Sprintf(": >> %s; %s >> %s 2>&1; : >> %s", logFile, c, logFile, logFile)
 		}
 
-		if err = docker.ExecInteractive(name, workdir, envList, []string{"bash", "-lc", actualCmd}); err != nil {
+		if err = docker.ExecInteractive(name, workdir, user, envList, []string{"bash", "-lc", actualCmd}); err != nil {
 			if !verbose && !isTruthyEnv("DV_VERBOSE") {
 				logFile := fmt.Sprintf("/tmp/dv-on-create-%d.log", i)
 				fmt.Fprintf(cmd.ErrOrStderr(), "on_create command failed. Log content:\n")
-				if logContent, logErr := docker.ExecOutput(name, workdir, nil, []string{"cat", logFile}); logErr == nil {
+				if logContent, logErr := docker.ExecOutput(name, workdir, user, nil, []string{"cat", logFile}); logErr == nil {
 					fmt.Fprintln(cmd.ErrOrStderr(), logContent)
 				} else {
 					fmt.Fprintf(cmd.ErrOrStderr(), "(Could not read log file: %v)\n", logErr)
@@ -501,22 +502,22 @@ ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
 			mcpCfg.codexArgs = m.Args
 			mcpCfg.geminiCommand = m.Command
 			mcpCfg.geminiArgs = m.Args
-			if err = configureMCP(cmd, name, workdir, envList, mcpCfg); err != nil {
+			if err = configureMCP(cmd, name, workdir, user, envList, mcpCfg); err != nil {
 				return fmt.Errorf("failed to configure custom MCP %s: %w", m.Name, err)
 			}
 		} else {
 			// Stock MCP (playwright, discourse, chrome-devtools)
 			switch m.Name {
 			case "playwright":
-				if err = configurePlaywrightMCP(cmd, name, workdir, envList); err != nil {
+				if err = configurePlaywrightMCP(cmd, name, workdir, user, envList); err != nil {
 					return err
 				}
 			case "discourse":
-				if err = configureDiscourseMCP(cmd, name, workdir, envList); err != nil {
+				if err = configureDiscourseMCP(cmd, name, workdir, user, envList); err != nil {
 					return err
 				}
 			case "chrome-devtools":
-				if err = configureChromeDevToolsMCP(cmd, name, workdir, envList); err != nil {
+				if err = configureChromeDevToolsMCP(cmd, name, workdir, user, envList); err != nil {
 					return err
 				}
 			default:

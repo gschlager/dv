@@ -87,6 +87,17 @@ type ImageConfig struct {
 	Workdir       string      `json:"workdir"`
 	ContainerPort int         `json:"containerPort"`
 	Dockerfile    ImageSource `json:"dockerfile"`
+	// User is the container user for exec/chown operations. Empty means "discourse".
+	User string `json:"user,omitempty"`
+}
+
+// EffectiveUser returns the runtime user for container exec and chown operations.
+// Returns User if set, otherwise "discourse" for backward compatibility.
+func (img ImageConfig) EffectiveUser() string {
+	if u := strings.TrimSpace(img.User); u != "" {
+		return u
+	}
+	return "discourse"
 }
 
 type LocalProxyConfig struct {

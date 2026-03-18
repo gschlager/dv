@@ -34,6 +34,7 @@ type Client struct {
 	APIUsername   string
 	ContainerName string
 	Workdir       string
+	User          string // Container user for exec operations
 	Verbose       bool
 	Envs          docker.Envs // Environment variables for container execution
 	httpClient    *http.Client
@@ -69,6 +70,7 @@ func NewClient(containerName string, cfg config.Config, envs docker.Envs, verbos
 		BaseURL:       baseURL,
 		ContainerName: containerName,
 		Workdir:       workdir,
+		User:          imgCfg.EffectiveUser(),
 		Verbose:       verbose,
 		Envs:          envs,
 		httpClient: &http.Client{
@@ -80,11 +82,12 @@ func NewClient(containerName string, cfg config.Config, envs docker.Envs, verbos
 }
 
 // NewClientWithURL creates a client with an explicit base URL (for testing or custom setups)
-func NewClientWithURL(containerName, baseURL, workdir string, envs docker.Envs, verbose bool) *Client {
+func NewClientWithURL(containerName, baseURL, workdir, user string, envs docker.Envs, verbose bool) *Client {
 	return &Client{
 		BaseURL:       baseURL,
 		ContainerName: containerName,
 		Workdir:       workdir,
+		User:          user,
 		Verbose:       verbose,
 		Envs:          envs,
 		httpClient: &http.Client{
@@ -135,7 +138,7 @@ func (c *Client) loadKeyFromContainer() error {
 	}
 
 	readCmd := fmt.Sprintf("cat %s 2>/dev/null", shellQuote(ContainerKeyPath))
-	out, err := docker.ExecOutput(c.ContainerName, c.Workdir, c.Envs, []string{"bash", "-c", readCmd})
+	out, err := docker.ExecOutput(c.ContainerName, c.Workdir, c.User, c.Envs, []string{"bash", "-c", readCmd})
 	if err != nil {
 		return fmt.Errorf("read key file: %w", err)
 	}
@@ -193,7 +196,7 @@ puts "DV_USERNAME:#{admin.username}"
 	cmd := fmt.Sprintf("cd %s && RAILS_ENV=development bundle exec rails runner - <<'RUBY'\n%s\nRUBY",
 		shellQuote(c.Workdir), rubyScript)
 
-	out, err := docker.ExecCombinedOutput(c.ContainerName, c.Workdir, c.Envs, []string{"bash", "-lc", cmd})
+	out, err := docker.ExecCombinedOutput(c.ContainerName, c.Workdir, c.User, c.Envs, []string{"bash", "-lc", cmd})
 	c.verboseLog("Rails runner output (%d bytes, markers: key=%t, user=%t)", len(out), strings.Contains(out, "DV_API_KEY:"), strings.Contains(out, "DV_USERNAME:"))
 	if err != nil {
 		return fmt.Errorf("rails runner failed: %w\nOutput: %s", err, out)
@@ -244,7 +247,7 @@ func (c *Client) saveKeyToContainer() error {
 		shellQuote(ContainerKeyPath),
 		shellQuote(ContainerKeyPath),
 	)
-	_, err := docker.ExecOutput(c.ContainerName, c.Workdir, c.Envs, []string{"bash", "-c", saveCmd})
+	_, err := docker.ExecOutput(c.ContainerName, c.Workdir, c.User, c.Envs, []string{"bash", "-c", saveCmd})
 	return err
 }
 

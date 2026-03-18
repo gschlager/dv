@@ -81,7 +81,7 @@ func resetDbRunE(cmd *cobra.Command, args []string) error {
 
 	script := buildDiscourseDatabaseResetScript()
 	argv := []string{"bash", "-lc", script}
-	if err := docker.ExecInteractive(name, workdir, nil, argv); err != nil {
+	if err := docker.ExecInteractive(name, workdir, imgCfg.EffectiveUser(), nil, argv); err != nil {
 		return fmt.Errorf("container: failed to reset databases: %w", err)
 	}
 	return nil
@@ -135,7 +135,7 @@ func resetGitRunE(cmd *cobra.Command, args []string) error {
 
 	script := buildDiscourseResetScript(buildCurrentBranchResetCommands(), discourseResetScriptOpts{})
 	argv := []string{"bash", "-lc", script}
-	if err := docker.ExecInteractive(name, workdir, nil, argv); err != nil {
+	if err := docker.ExecInteractive(name, workdir, imgCfg.EffectiveUser(), nil, argv); err != nil {
 		return fmt.Errorf("container: failed to reset git: %w", err)
 	}
 	return nil

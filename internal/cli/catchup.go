@@ -58,10 +58,11 @@ func catchupRunE(cmd *cobra.Command, args []string) error {
 	if imgCfg.Kind != "discourse" {
 		return fmt.Errorf("'dv catchup' is only supported for discourse image kind; current: %q", imgCfg.Kind)
 	}
+	user := imgCfg.EffectiveUser()
 
 	// Discover plugins with their own git repos
 	findScript := "find plugins -maxdepth 2 -name .git -type d 2>/dev/null | sed 's|/.git$||' | sort"
-	pluginOutput, err := docker.ExecOutput(name, workdir, nil, []string{"bash", "-c", findScript})
+	pluginOutput, err := docker.ExecOutput(name, workdir, user, nil, []string{"bash", "-c", findScript})
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to discover plugin repos: %v\n", err)
 		pluginOutput = ""
@@ -99,7 +100,7 @@ func catchupRunE(cmd *cobra.Command, args []string) error {
 
 	script := buildCatchupScript(workdir, plugins)
 	argv := []string{"bash", "-lc", script}
-	if err := docker.ExecInteractive(name, workdir, nil, argv); err != nil {
+	if err := docker.ExecInteractive(name, workdir, user, nil, argv); err != nil {
 		return fmt.Errorf("container: catchup failed: %w", err)
 	}
 	return nil

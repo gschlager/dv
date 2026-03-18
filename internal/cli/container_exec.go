@@ -19,6 +19,7 @@ import (
 type containerExecContext struct {
 	name    string
 	workdir string
+	user    string
 	envs    docker.Envs
 }
 
@@ -68,19 +69,21 @@ func prepareContainerExecContext(cmd *cobra.Command, overrideName ...string) (co
 		}
 	}
 	workdir := config.EffectiveWorkdir(cfg, imgCfg, name)
+	user := imgCfg.EffectiveUser()
 
-	copyConfiguredFiles(cmd, cfg, name, workdir, "")
+	copyConfiguredFiles(cmd, cfg, name, workdir, user, "")
 
 	envs := collectEnvPassthrough(cfg)
 
 	return containerExecContext{
 		name:    name,
 		workdir: workdir,
+		user:    user,
 		envs:    envs,
 	}, true, nil
 }
 
-func copyConfiguredFiles(cmd *cobra.Command, cfg config.Config, containerName, workdir, agent string) {
+func copyConfiguredFiles(cmd *cobra.Command, cfg config.Config, containerName, workdir, user, agent string) {
 	agent = strings.ToLower(strings.TrimSpace(agent))
 	for _, rule := range cfg.CopyRules {
 		if !ruleMatchesAgent(rule, agent) {
@@ -122,30 +125,30 @@ func copyConfiguredFiles(cmd *cobra.Command, cfg config.Config, containerName, w
 
 			// Skip if destination already exists in container
 			if rule.SkipIfPresent {
-				out, err := docker.ExecOutput(containerName, workdir, nil, []string{"test", "-e", target})
+				out, err := docker.ExecOutput(containerName, workdir, user, nil, []string{"test", "-e", target})
 				if err == nil && out == "" {
 					continue
 				}
 			}
 
 			dstDir := filepath.Dir(target)
-			_, _ = docker.ExecOutput(containerName, workdir, nil, []string{"bash", "-lc", "mkdir -p " + shellQuote(dstDir)})
+			_, _ = docker.ExecOutput(containerName, workdir, user, nil, []string{"bash", "-lc", "mkdir -p " + shellQuote(dstDir)})
 
 			if len(rule.CopyKeys) > 0 && strings.HasSuffix(strings.ToLower(hp.path), ".json") {
-				if err := copyJsonKeys(containerName, hp.path, target, rule.CopyKeys); err != nil {
+				if err := copyJsonKeys(containerName, hp.path, target, user, rule.CopyKeys); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "Failed to copy keys from %s to %s: %v\n", hp.path, target, err)
 				}
 				continue
 			}
 
 			if rule.MergeKey != "" && strings.HasSuffix(strings.ToLower(hp.path), ".json") {
-				if err := mergeAndCopyJSON(containerName, hp.path, target, rule.MergeKey); err != nil {
+				if err := mergeAndCopyJSON(containerName, hp.path, target, user, rule.MergeKey); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "Failed to merge and copy %s to %s: %v\n", hp.path, target, err)
 				}
 				continue
 			}
 
-			if err := docker.CopyToContainerWithOwnership(containerName, hp.path, target, hp.isDir); err != nil {
+			if err := docker.CopyToContainerWithOwnership(containerName, hp.path, target, user, hp.isDir); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Failed to copy %s to %s: %v\n", hp.path, target, err)
 				continue
 			}
@@ -177,7 +180,7 @@ func runFallbackCommand(command string) (string, error) {
 	return tmpFile.Name(), nil
 }
 
-func copyJsonKeys(containerName, hostPath, target string, keys []string) error {
+func copyJsonKeys(containerName, hostPath, target, user string, keys []string) error {
 	hostData, err := os.ReadFile(hostPath)
 	if err != nil {
 		return err
@@ -232,10 +235,10 @@ func copyJsonKeys(containerName, hostPath, target string, keys []string) error {
 		return err
 	}
 
-	return docker.CopyToContainerWithOwnership(containerName, mergedTmp, target, false)
+	return docker.CopyToContainerWithOwnership(containerName, mergedTmp, target, user, false)
 }
 
-func mergeAndCopyJSON(containerName, hostPath, target, mergeKey string) error {
+func mergeAndCopyJSON(containerName, hostPath, target, user, mergeKey string) error {
 	hostData, err := os.ReadFile(hostPath)
 	if err != nil {
 		return err
@@ -265,7 +268,7 @@ func mergeAndCopyJSON(containerName, hostPath, target, mergeKey string) error {
 
 	if containerJSON == nil {
 		// No existing container JSON or failed to read, just copy host file
-		return docker.CopyToContainerWithOwnership(containerName, hostPath, target, false)
+		return docker.CopyToContainerWithOwnership(containerName, hostPath, target, user, false)
 	}
 
 	// Perform merge: host wins for everything except mergeKey which is merged
@@ -281,7 +284,7 @@ func mergeAndCopyJSON(containerName, hostPath, target, mergeKey string) error {
 		return err
 	}
 
-	return docker.CopyToContainerWithOwnership(containerName, mergedTmp, target, false)
+	return docker.CopyToContainerWithOwnership(containerName, mergedTmp, target, user, false)
 }
 
 func deepMerge(dst, src map[string]any, mergeKey string) map[string]any {

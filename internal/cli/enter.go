@@ -37,7 +37,7 @@ var enterCmd = &cobra.Command{
 		if asRoot {
 			return docker.ExecInteractiveAsRoot(ctx.name, ctx.workdir, ctx.envs, execArgs)
 		}
-		return docker.ExecInteractive(ctx.name, ctx.workdir, ctx.envs, execArgs)
+		return docker.ExecInteractive(ctx.name, ctx.workdir, ctx.user, ctx.envs, execArgs)
 	},
 }
 

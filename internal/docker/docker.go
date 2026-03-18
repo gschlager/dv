@@ -426,8 +426,8 @@ func RunDetached(name, workdir, image string, hostPort, containerPort int, label
 	return cmd.Run()
 }
 
-func ExecInteractive(name, workdir string, envs Envs, argv []string) error {
-	args := []string{"exec", "-i", "--user", "discourse", "-w", workdir}
+func ExecInteractive(name, workdir, user string, envs Envs, argv []string) error {
+	args := []string{"exec", "-i", "--user", user, "-w", workdir}
 	// Add -t only when both stdin and stdout are TTYs
 	if term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
 		args = append([]string{"exec", "-t"}, args[1:]...)
@@ -442,10 +442,10 @@ func ExecInteractive(name, workdir string, envs Envs, argv []string) error {
 	return cmd.Run()
 }
 
-// ExecStream runs a command inside the container as the discourse user and streams output to writers.
+// ExecStream runs a command inside the container as the given user and streams output to writers.
 // Use nil for envs when no environment variables are needed.
-func ExecStream(name, workdir string, envs Envs, argv []string, stdout, stderr io.Writer) error {
-	args := []string{"exec", "--user", "discourse", "-w", workdir}
+func ExecStream(name, workdir, user string, envs Envs, argv []string, stdout, stderr io.Writer) error {
+	args := []string{"exec", "--user", user, "-w", workdir}
 	for _, e := range envs {
 		args = append(args, "-e", e)
 	}
@@ -478,11 +478,11 @@ func ExecInteractiveAsRoot(name, workdir string, envs Envs, argv []string) error
 // Using a distinct type prevents accidental argument swaps with argv.
 type Envs []string
 
-// ExecOutput runs a command inside the container as the discourse user.
+// ExecOutput runs a command inside the container as the given user.
 // Use nil for envs when no environment variables are needed.
 // Returns stdout only; use ExecCombinedOutput if you need stderr too.
-func ExecOutput(name, workdir string, envs Envs, argv []string) (string, error) {
-	args := []string{"exec", "--user", "discourse", "-w", workdir}
+func ExecOutput(name, workdir, user string, envs Envs, argv []string) (string, error) {
+	args := []string{"exec", "--user", user, "-w", workdir}
 	for _, e := range envs {
 		args = append(args, "-e", e)
 	}
@@ -493,11 +493,11 @@ func ExecOutput(name, workdir string, envs Envs, argv []string) (string, error) 
 	return string(out), err
 }
 
-// ExecOutputContext runs a command inside the container as the discourse user with context.
+// ExecOutputContext runs a command inside the container as the given user with context.
 // Use nil for envs when no environment variables are needed.
 // Returns stdout only; use ExecCombinedOutputContext if you need stderr too.
-func ExecOutputContext(ctx context.Context, name, workdir string, envs Envs, argv []string) (string, error) {
-	args := []string{"exec", "--user", "discourse", "-w", workdir}
+func ExecOutputContext(ctx context.Context, name, workdir, user string, envs Envs, argv []string) (string, error) {
+	args := []string{"exec", "--user", user, "-w", workdir}
 	for _, e := range envs {
 		args = append(args, "-e", e)
 	}
@@ -508,11 +508,11 @@ func ExecOutputContext(ctx context.Context, name, workdir string, envs Envs, arg
 	return string(out), err
 }
 
-// ExecCombinedOutput runs a command inside the container as the discourse user.
+// ExecCombinedOutput runs a command inside the container as the given user.
 // Use nil for envs when no environment variables are needed.
 // Returns both stdout and stderr combined.
-func ExecCombinedOutput(name, workdir string, envs Envs, argv []string) (string, error) {
-	args := []string{"exec", "--user", "discourse", "-w", workdir}
+func ExecCombinedOutput(name, workdir, user string, envs Envs, argv []string) (string, error) {
+	args := []string{"exec", "--user", user, "-w", workdir}
 	for _, e := range envs {
 		args = append(args, "-e", e)
 	}
@@ -523,11 +523,11 @@ func ExecCombinedOutput(name, workdir string, envs Envs, argv []string) (string,
 	return string(out), err
 }
 
-// ExecCombinedOutputContext runs a command inside the container as the discourse user with context.
+// ExecCombinedOutputContext runs a command inside the container as the given user with context.
 // Use nil for envs when no environment variables are needed.
 // Returns both stdout and stderr combined.
-func ExecCombinedOutputContext(ctx context.Context, name, workdir string, envs Envs, argv []string) (string, error) {
-	args := []string{"exec", "--user", "discourse", "-w", workdir}
+func ExecCombinedOutputContext(ctx context.Context, name, workdir, user string, envs Envs, argv []string) (string, error) {
+	args := []string{"exec", "--user", user, "-w", workdir}
 	for _, e := range envs {
 		args = append(args, "-e", e)
 	}
@@ -673,9 +673,9 @@ func CopyToContainerContext(ctx context.Context, name, srcOnHost, dstInContainer
 }
 
 // CopyToContainerWithOwnership copies a file or directory into a container and
-// sets its ownership to discourse:discourse. If recursive is true, ownership is
+// sets its ownership to user:user. If recursive is true, ownership is
 // set recursively (useful for directories).
-func CopyToContainerWithOwnership(name, srcOnHost, dstInContainer string, recursive bool) error {
+func CopyToContainerWithOwnership(name, srcOnHost, dstInContainer, user string, recursive bool) error {
 	if err := CopyToContainer(name, srcOnHost, dstInContainer); err != nil {
 		return err
 	}
@@ -684,7 +684,7 @@ func CopyToContainerWithOwnership(name, srcOnHost, dstInContainer string, recurs
 	if recursive {
 		chownArgs = append(chownArgs, "-R")
 	}
-	chownArgs = append(chownArgs, "discourse:discourse", dstInContainer)
+	chownArgs = append(chownArgs, user+":"+user, dstInContainer)
 
 	if _, err := ExecAsRoot(name, "/", nil, chownArgs); err != nil {
 		return fmt.Errorf("failed to set ownership on %s: %w", dstInContainer, err)
@@ -693,8 +693,8 @@ func CopyToContainerWithOwnership(name, srcOnHost, dstInContainer string, recurs
 }
 
 // CopyToContainerWithOwnershipContext copies a file or directory into a container with context
-// and sets its ownership to discourse:discourse. If recursive is true, ownership is set recursively.
-func CopyToContainerWithOwnershipContext(ctx context.Context, name, srcOnHost, dstInContainer string, recursive bool) error {
+// and sets its ownership to user:user. If recursive is true, ownership is set recursively.
+func CopyToContainerWithOwnershipContext(ctx context.Context, name, srcOnHost, dstInContainer, user string, recursive bool) error {
 	if err := CopyToContainerContext(ctx, name, srcOnHost, dstInContainer); err != nil {
 		return err
 	}
@@ -703,7 +703,7 @@ func CopyToContainerWithOwnershipContext(ctx context.Context, name, srcOnHost, d
 	if recursive {
 		chownArgs = append(chownArgs, "-R")
 	}
-	chownArgs = append(chownArgs, "discourse:discourse", dstInContainer)
+	chownArgs = append(chownArgs, user+":"+user, dstInContainer)
 
 	if _, err := ExecAsRootContext(ctx, name, "/", nil, chownArgs); err != nil {
 		return fmt.Errorf("failed to set ownership on %s: %w", dstInContainer, err)
