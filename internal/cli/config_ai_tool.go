@@ -24,6 +24,7 @@ type aiToolCommandContext struct {
 	cfg           *config.Config
 	configDir     string
 	containerName string
+	user          string
 	discourseRoot string
 }
 
@@ -119,10 +120,11 @@ into Discourse once ready. The container workdir is updated so 'dv enter' opens 
 			cfg:           &cfg,
 			configDir:     configDir,
 			containerName: containerName,
+			user:          imgCfg.EffectiveUser(),
 			discourseRoot: discourseRoot,
 		}
 
-		if err := ensureAiToolsRoot(ctx.containerName); err != nil {
+		if err := ensureAiToolsRoot(ctx.containerName, imgCfg.EffectiveUser()); err != nil {
 			return err
 		}
 
@@ -196,7 +198,7 @@ into Discourse once ready. The container workdir is updated so 'dv enter' opens 
 			return err
 		}
 
-		if err := docker.CopyToContainerWithOwnership(ctx.containerName, root, workspacePath, true); err != nil {
+		if err := docker.CopyToContainerWithOwnership(ctx.containerName, root, workspacePath, ctx.user, true); err != nil {
 			return err
 		}
 
@@ -217,9 +219,9 @@ func init() {
 	configCmd.AddCommand(configAiToolCmd)
 }
 
-func ensureAiToolsRoot(containerName string) error {
+func ensureAiToolsRoot(containerName, user string) error {
 	cmd := "mkdir -p /home/discourse/ai-tools"
-	if _, err := docker.ExecOutput(containerName, "/home/discourse", nil, []string{"bash", "-lc", cmd}); err != nil {
+	if _, err := docker.ExecOutput(containerName, "/home/discourse", user, nil, []string{"bash", "-lc", cmd}); err != nil {
 		return fmt.Errorf("failed to create /home/discourse/ai-tools: %w", err)
 	}
 	return nil
@@ -244,7 +246,7 @@ STDOUT.sync = true
 print(JSON.generate(payload))
 `
 	script := fmt.Sprintf("cd %s && bundle exec rails runner %s", shellQuote(ctx.discourseRoot), shellQuote(ruby))
-	out, err := docker.ExecOutput(ctx.containerName, ctx.discourseRoot, nil, []string{"bash", "-lc", script})
+	out, err := docker.ExecOutput(ctx.containerName, ctx.discourseRoot, ctx.user, nil, []string{"bash", "-lc", script})
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch AI tool presets: %v\n%s", err, strings.TrimSpace(out))
 	}

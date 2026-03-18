@@ -432,7 +432,7 @@ func ensureContainerRunningWithWorkdir(cmd *cobra.Command, cfg config.Config, na
 		if proxyHost != "" {
 			extraHosts = append(extraHosts, fmt.Sprintf("%s:127.0.0.1", proxyHost))
 		}
-		if err := docker.RunDetached(name, workdir, imageTag, chosenPort, cfg.ContainerPort, labels, envs, extraHosts, sshAuthSock); err != nil {
+		if err := docker.RunDetached(name, workdir, imageTag, chosenPort, cfg.ContainerPort, labels, envs, extraHosts, sshAuthSock, docker.DiscourseSysctlArgs(), nil, nil); err != nil {
 			return err
 		}
 		if proxyHost != "" {

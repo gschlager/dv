@@ -531,7 +531,7 @@ func TestPerformGitSyncAutoSyncContainerChanges(t *testing.T) {
 		dockerCopyToContainerWithOwnership = origCopyTo
 	})
 
-	dockerExecOutput = func(ctx context.Context, _ string, workdir string, _ docker.Envs, argv []string) (string, error) {
+	dockerExecOutput = func(ctx context.Context, _ string, workdir string, _ string, _ docker.Envs, argv []string) (string, error) {
 		if len(argv) == 0 {
 			return "", nil
 		}
@@ -552,7 +552,7 @@ func TestPerformGitSyncAutoSyncContainerChanges(t *testing.T) {
 	dockerCopyFromContainer = func(_ context.Context, _ string, srcInContainer, dstOnHost string) error {
 		return copyFile(srcInContainer, dstOnHost)
 	}
-	dockerCopyToContainerWithOwnership = func(_ context.Context, _ string, srcOnHost, dstInContainer string, _ bool) error {
+	dockerCopyToContainerWithOwnership = func(_ context.Context, _ string, srcOnHost, dstInContainer string, _ string, _ bool) error {
 		return copyFileToDir(srcOnHost, dstInContainer)
 	}
 
@@ -612,6 +612,7 @@ func TestGitSyncerEmptyRepo(t *testing.T) {
 		context.Background(),
 		"fake-container",
 		"/fake/workdir",
+		"discourse",
 		tmpDir,
 		io.Discard,
 		io.Discard,
@@ -659,6 +660,7 @@ func TestGitSyncerWithCommits(t *testing.T) {
 		context.Background(),
 		"fake-container",
 		"/fake/workdir",
+		"discourse",
 		tmpDir,
 		io.Discard,
 		io.Discard,

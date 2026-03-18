@@ -289,7 +289,7 @@ func handleContainerCreate(w http.ResponseWriter, r *http.Request, configDir str
 				"DISCOURSE_PORT": strconv.Itoa(chosenPort),
 			}
 			logger(fmt.Sprintf("Creating and starting container '%s' with image '%s'...\n", name, imgCfg.Tag))
-			if err := docker.RunDetached(name, workdir, imgCfg.Tag, chosenPort, containerPort, labels, envs, nil, ""); err != nil {
+			if err := docker.RunDetached(name, workdir, imgCfg.Tag, chosenPort, containerPort, labels, envs, nil, "", docker.DiscourseSysctlArgs(), nil, nil); err != nil {
 				return err
 			}
 		} else if !docker.Running(name) {
@@ -362,11 +362,15 @@ func handleContainer(w http.ResponseWriter, r *http.Request, configDir string, p
 			writeJSON(w, http.StatusNotFound, "not found")
 		case "logs":
 			if len(parts) >= 4 {
+				logUser := "discourse"
+				if logCtx, logErr := ensureContainerExecContext(configDir, name); logErr == nil {
+					logUser = logCtx.user
+				}
 				switch parts[3] {
 				case "unicorn":
-					handleContainerLogTail(w, r, name, "/var/www/discourse/log/unicorn.log")
+					handleContainerLogTail(w, r, name, logUser, "/var/www/discourse/log/unicorn.log")
 				case "ember":
-					handleContainerLogTail(w, r, name, "/var/www/discourse/log/ember-cli.log")
+					handleContainerLogTail(w, r, name, logUser, "/var/www/discourse/log/ember-cli.log")
 				default:
 					writeJSON(w, http.StatusNotFound, "not found")
 				}
@@ -452,7 +456,7 @@ func handleContainerStart(w http.ResponseWriter, r *http.Request, configDir, nam
 				"DISCOURSE_PORT": strconv.Itoa(chosenPort),
 			}
 			logger(fmt.Sprintf("Creating and starting container '%s'...\n", name))
-			return docker.RunDetached(name, workdir, imgCfg.Tag, chosenPort, cfg.ContainerPort, labels, envs, nil, "")
+			return docker.RunDetached(name, workdir, imgCfg.Tag, chosenPort, cfg.ContainerPort, labels, envs, nil, "", docker.DiscourseSysctlArgs(), nil, nil)
 		}
 		if !docker.Running(name) {
 			logger(fmt.Sprintf("Starting container '%s'...\n", name))
@@ -643,7 +647,7 @@ func handleContainerRun(w http.ResponseWriter, r *http.Request, configDir, name 
 		return
 	}
 	streamExec(w, func(stdout, stderr io.Writer) error {
-		return docker.ExecStream(name, workdir, envs, argv, stdout, stderr)
+		return docker.ExecStream(name, workdir, ctx.user, envs, argv, stdout, stderr)
 	}, true)
 }
 
@@ -679,23 +683,23 @@ func handleContainerRunAgent(w http.ResponseWriter, r *http.Request, configDir, 
 	cmdStub := &cobra.Command{}
 	cmdStub.SetOut(io.Discard)
 	cmdStub.SetErr(io.Discard)
-	copyConfiguredFiles(cmdStub, cfg, name, workdir, agent)
-	envs := buildAgentEnv(cfg, agent, cmdStub)
+	copyConfiguredFiles(cmdStub, cfg, name, workdir, ctx.user, agent)
+	envs := buildAgentEnv(cfg, agent, ctx.user, cmdStub)
 
 	var argv []string
 	if len(req.RawArgs) > 0 {
 		argv = append([]string{agent}, req.RawArgs...)
 	} else if strings.TrimSpace(req.Prompt) == "" {
-		argv = buildAgentInteractive(agent)
+		argv = buildAgentInteractive(agent, ctx.user)
 	} else {
-		argv = buildAgentArgs(agent, req.Prompt)
+		argv = buildAgentArgs(agent, req.Prompt, ctx.user)
 	}
 
 	shellCmd := withUserPaths(shellJoin(argv))
 	finalArgs := []string{"bash", "-lc", shellCmd}
 
 	streamExec(w, func(stdout, stderr io.Writer) error {
-		return docker.ExecStream(name, workdir, envs, finalArgs, stdout, stderr)
+		return docker.ExecStream(name, workdir, ctx.user, envs, finalArgs, stdout, stderr)
 	}, true)
 }
 
@@ -766,7 +770,7 @@ func handleContainerBranch(w http.ResponseWriter, r *http.Request, configDir, na
 	workdir := ctx.workdir
 
 	streamExec(w, func(stdout, stderr io.Writer) error {
-		return docker.ExecStream(ctx.name, workdir, nil, argv, stdout, stderr)
+		return docker.ExecStream(ctx.name, workdir, ctx.user, nil, argv, stdout, stderr)
 	}, true)
 }
 
@@ -779,7 +783,7 @@ func handleContainerCatchup(w http.ResponseWriter, r *http.Request, configDir, n
 	workdir := ctx.workdir
 
 	findScript := "find plugins -maxdepth 2 -name .git -type d 2>/dev/null | sed 's|/.git$||' | sort"
-	pluginOutput, err := docker.ExecOutput(ctx.name, workdir, nil, []string{"bash", "-c", findScript})
+	pluginOutput, err := docker.ExecOutput(ctx.name, workdir, ctx.user, nil, []string{"bash", "-c", findScript})
 	if err != nil {
 		pluginOutput = ""
 	}
@@ -795,7 +799,7 @@ func handleContainerCatchup(w http.ResponseWriter, r *http.Request, configDir, n
 	argv := []string{"bash", "-lc", script}
 
 	streamExec(w, func(stdout, stderr io.Writer) error {
-		return docker.ExecStream(ctx.name, workdir, nil, argv, stdout, stderr)
+		return docker.ExecStream(ctx.name, workdir, ctx.user, nil, argv, stdout, stderr)
 	}, true)
 }
 
@@ -824,7 +828,7 @@ func handleContainerReset(w http.ResponseWriter, r *http.Request, configDir, nam
 	argv := []string{"bash", "-lc", script}
 
 	streamExec(w, func(stdout, stderr io.Writer) error {
-		return docker.ExecStream(ctx.name, workdir, nil, argv, stdout, stderr)
+		return docker.ExecStream(ctx.name, workdir, ctx.user, nil, argv, stdout, stderr)
 	}, true)
 }
 
@@ -898,7 +902,7 @@ func handleContainerUpdateAgents(w http.ResponseWriter, r *http.Request, configD
 				if step.runAsRoot {
 					return execStreamAsUser("root", ctx.name, workdir, nil, argv, stdout, stderr)
 				}
-				return docker.ExecStream(ctx.name, workdir, nil, argv, stdout, stderr)
+				return docker.ExecStream(ctx.name, workdir, ctx.user, nil, argv, stdout, stderr)
 			}
 			if err := runExecWithSSE(sse, execFn); err != nil {
 				return err
@@ -908,7 +912,7 @@ func handleContainerUpdateAgents(w http.ResponseWriter, r *http.Request, configD
 	}, true)
 }
 
-func handleContainerLogTail(w http.ResponseWriter, r *http.Request, name, logPath string) {
+func handleContainerLogTail(w http.ResponseWriter, r *http.Request, name, user, logPath string) {
 	lines := 50
 	if v := strings.TrimSpace(r.URL.Query().Get("lines")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -918,7 +922,7 @@ func handleContainerLogTail(w http.ResponseWriter, r *http.Request, name, logPat
 	argv := []string{"tail", "-n", strconv.Itoa(lines), "-f", logPath}
 
 	streamExec(w, func(stdout, stderr io.Writer) error {
-		return execStreamContext(r.Context(), name, "/", nil, argv, stdout, stderr)
+		return execStreamContext(r.Context(), name, "/", user, nil, argv, stdout, stderr)
 	}, false)
 }
 
@@ -1320,9 +1324,10 @@ func ensureContainerExecContext(configDir, name string) (containerExecContext, e
 	if strings.TrimSpace(workdir) == "" {
 		workdir = "/var/www/discourse"
 	}
+	user := imgCfg.EffectiveUser()
 	envs := collectEnvPassthrough(cfg)
 
-	return containerExecContext{name: name, workdir: workdir, envs: envs}, nil
+	return containerExecContext{name: name, workdir: workdir, user: user, envs: envs}, nil
 }
 
 func ensureDiscourseContainer(configDir, name string) (containerExecContext, config.ImageConfig, error) {
@@ -1477,8 +1482,8 @@ func execStreamAsUser(user, name, workdir string, envs docker.Envs, argv []strin
 	return cmd.Run()
 }
 
-func execStreamContext(ctx context.Context, name, workdir string, envs docker.Envs, argv []string, stdout, stderr io.Writer) error {
-	args := []string{"exec", "--user", "discourse", "-w", workdir}
+func execStreamContext(ctx context.Context, name, workdir, user string, envs docker.Envs, argv []string, stdout, stderr io.Writer) error {
+	args := []string{"exec", "--user", user, "-w", workdir}
 	for _, e := range envs {
 		args = append(args, "-e", e)
 	}

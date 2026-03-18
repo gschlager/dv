@@ -205,9 +205,10 @@ var configCcrCmd = &cobra.Command{
 			}
 		}
 		workdir := imgCfg.Workdir
+		user := imgCfg.EffectiveUser()
 
 		// Ensure CCR binary exists
-		if _, err := docker.ExecOutput(containerName, workdir, nil, []string{"bash", "-lc", "command -v ccr"}); err != nil {
+		if _, err := docker.ExecOutput(containerName, workdir, user, nil, []string{"bash", "-lc", "command -v ccr"}); err != nil {
 			return fmt.Errorf("ccr CLI not found in container '%s'; install it with `npm install -g @musistudio/claude-code-router` inside the container", containerName)
 		}
 
@@ -304,7 +305,7 @@ var configCcrCmd = &cobra.Command{
 				fmt.Fprintln(cmd.OutOrStdout(), "\nCustom configuration mode...")
 
 				// Try to read existing config
-				existingRouter, err := readExistingRouter(containerName, workdir, containerConfigPath)
+				existingRouter, err := readExistingRouter(containerName, workdir, user, containerConfigPath)
 				if err != nil {
 					fmt.Fprintf(cmd.OutOrStdout(), "No existing config found, starting fresh.\n")
 				}
@@ -327,7 +328,7 @@ var configCcrCmd = &cobra.Command{
 					"_dv":        meta,
 				}
 
-				return writeConfigToContainer(ccrCfg, containerName, workdir, containerConfigPath)
+				return writeConfigToContainer(ccrCfg, containerName, workdir, user, containerConfigPath)
 			}
 
 			// Use selected preset
@@ -352,7 +353,7 @@ var configCcrCmd = &cobra.Command{
 				"_dv":        meta,
 			}
 
-			return writeConfigToContainer(ccrCfg, containerName, workdir, containerConfigPath)
+			return writeConfigToContainer(ccrCfg, containerName, workdir, user, containerConfigPath)
 		}
 
 		// Dry-run or skip-model-eval: use default routing
@@ -397,10 +398,10 @@ var configCcrCmd = &cobra.Command{
 			return err
 		}
 
-		if _, err := docker.ExecOutput(containerName, workdir, nil, []string{"bash", "-lc", "mkdir -p ~/.claude-code-router"}); err != nil {
+		if _, err := docker.ExecOutput(containerName, workdir, user, nil, []string{"bash", "-lc", "mkdir -p ~/.claude-code-router"}); err != nil {
 			return err
 		}
-		if err := docker.CopyToContainerWithOwnership(containerName, updatedPath, containerConfigPath, false); err != nil {
+		if err := docker.CopyToContainerWithOwnership(containerName, updatedPath, containerConfigPath, user, false); err != nil {
 			return fmt.Errorf("failed to copy CCR config into container: %w", err)
 		}
 
@@ -424,7 +425,7 @@ var configCcrCmd = &cobra.Command{
 		}
 
 		fmt.Fprintln(cmd.OutOrStdout(), "\nLaunching `ccr model` inside the container so you can fine-tune model ordering (press Ctrl+C to exit)...")
-		return docker.ExecInteractive(containerName, workdir, envs, []string{"bash", "-lc", "ccr model"})
+		return docker.ExecInteractive(containerName, workdir, user, envs, []string{"bash", "-lc", "ccr model"})
 	},
 }
 
@@ -522,7 +523,7 @@ func makeStatusLineConfig() map[string]interface{} {
 	}
 }
 
-func writeConfigToContainer(ccrCfg map[string]interface{}, containerName, workdir, containerConfigPath string) error {
+func writeConfigToContainer(ccrCfg map[string]interface{}, containerName, workdir, user, containerConfigPath string) error {
 	b, err := json.MarshalIndent(ccrCfg, "", "  ")
 	if err != nil {
 		return err
@@ -539,10 +540,10 @@ func writeConfigToContainer(ccrCfg map[string]interface{}, containerName, workdi
 		return err
 	}
 
-	if _, err := docker.ExecOutput(containerName, workdir, nil, []string{"bash", "-lc", "mkdir -p ~/.claude-code-router"}); err != nil {
+	if _, err := docker.ExecOutput(containerName, workdir, user, nil, []string{"bash", "-lc", "mkdir -p ~/.claude-code-router"}); err != nil {
 		return err
 	}
-	if err := docker.CopyToContainerWithOwnership(containerName, updatedPath, containerConfigPath, false); err != nil {
+	if err := docker.CopyToContainerWithOwnership(containerName, updatedPath, containerConfigPath, user, false); err != nil {
 		return fmt.Errorf("failed to copy CCR config into container: %w", err)
 	}
 

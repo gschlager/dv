@@ -18,6 +18,7 @@ type workspaceExtractOptions struct {
 	cmd              *cobra.Command
 	containerName    string
 	containerWorkdir string
+	user             string
 	localRepo        string
 	branchName       string
 	displayName      string
@@ -37,7 +38,7 @@ func extractWorkspaceRepo(opts workspaceExtractOptions) error {
 		procErr = opts.cmd.ErrOrStderr()
 	}
 
-	isRepoOut, _ := docker.ExecOutput(opts.containerName, opts.containerWorkdir, nil, []string{"bash", "-lc", "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && echo true || echo false"})
+	isRepoOut, _ := docker.ExecOutput(opts.containerName, opts.containerWorkdir, opts.user, nil, []string{"bash", "-lc", "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && echo true || echo false"})
 	isRepo := strings.Contains(strings.ToLower(isRepoOut), "true")
 	if !isRepo {
 		return copyWorkspaceDirectory(opts, logOut, "Workspace is not a git repository", false)
@@ -46,6 +47,7 @@ func extractWorkspaceRepo(opts workspaceExtractOptions) error {
 		cleanup, err := registerExtractSync(opts.cmd, syncOptions{
 			containerName:    opts.containerName,
 			containerWorkdir: opts.containerWorkdir,
+			user:             opts.user,
 			localRepo:        opts.localRepo,
 			logOut:           logOut,
 			errOut:           opts.cmd.ErrOrStderr(),
@@ -57,7 +59,7 @@ func extractWorkspaceRepo(opts workspaceExtractOptions) error {
 		defer cleanup()
 	}
 
-	status, err := docker.ExecOutput(opts.containerName, opts.containerWorkdir, nil, []string{"bash", "-lc", "git status --porcelain"})
+	status, err := docker.ExecOutput(opts.containerName, opts.containerWorkdir, opts.user, nil, []string{"bash", "-lc", "git status --porcelain"})
 	if err != nil {
 		return err
 	}
@@ -69,7 +71,7 @@ func extractWorkspaceRepo(opts workspaceExtractOptions) error {
 		}
 	}
 
-	repoCloneURL, _ := docker.ExecOutput(opts.containerName, opts.containerWorkdir, nil, []string{"bash", "-lc", "git config --get remote.origin.url"})
+	repoCloneURL, _ := docker.ExecOutput(opts.containerName, opts.containerWorkdir, opts.user, nil, []string{"bash", "-lc", "git config --get remote.origin.url"})
 	repoCloneURL = strings.TrimSpace(repoCloneURL)
 	if repoCloneURL == "" {
 		return copyWorkspaceDirectory(opts, logOut, "No git remote detected; copying entire workspace", true)
@@ -94,7 +96,7 @@ func extractWorkspaceRepo(opts workspaceExtractOptions) error {
 		}
 	}
 
-	commit, err := docker.ExecOutput(opts.containerName, opts.containerWorkdir, nil, []string{"bash", "-lc", "git rev-parse HEAD"})
+	commit, err := docker.ExecOutput(opts.containerName, opts.containerWorkdir, opts.user, nil, []string{"bash", "-lc", "git rev-parse HEAD"})
 	if err != nil {
 		return err
 	}
@@ -103,7 +105,7 @@ func extractWorkspaceRepo(opts workspaceExtractOptions) error {
 		return fmt.Errorf("unable to determine commit in %s", opts.containerWorkdir)
 	}
 
-	containerBranch, err := docker.ExecOutput(opts.containerName, opts.containerWorkdir, nil, []string{"bash", "-lc", "git rev-parse --abbrev-ref HEAD"})
+	containerBranch, err := docker.ExecOutput(opts.containerName, opts.containerWorkdir, opts.user, nil, []string{"bash", "-lc", "git rev-parse --abbrev-ref HEAD"})
 	if err != nil {
 		containerBranch = ""
 	}
@@ -130,7 +132,7 @@ func extractWorkspaceRepo(opts workspaceExtractOptions) error {
 	} else {
 		// Commit missing - try to fetch from container first (handles rebased commits)
 		ctx := opts.cmd.Context()
-		syncErr := syncFromContainer(ctx, opts.containerName, opts.containerWorkdir, opts.localRepo, commit, logOut, opts.syncDebug)
+		syncErr := syncFromContainer(ctx, opts.containerName, opts.containerWorkdir, opts.user, opts.localRepo, commit, logOut, opts.syncDebug)
 		if syncErr == nil && commitExistsInRepo(opts.localRepo, commit) {
 			// Sync succeeded and commit now exists - do normal checkout
 			if containerBranch != "" && containerBranch != "HEAD" {
@@ -226,6 +228,7 @@ func extractWorkspaceRepo(opts workspaceExtractOptions) error {
 		return runExtractSync(opts.cmd, syncOptions{
 			containerName:    opts.containerName,
 			containerWorkdir: opts.containerWorkdir,
+			user:             opts.user,
 			localRepo:        opts.localRepo,
 			logOut:           logOut,
 			errOut:           opts.cmd.ErrOrStderr(),

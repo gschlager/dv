@@ -88,6 +88,7 @@ var branchCmd = &cobra.Command{
 		if imgCfg.Kind != "discourse" {
 			return fmt.Errorf("'dv branch' is only supported for discourse image kind; current: %q", imgCfg.Kind)
 		}
+		user := imgCfg.EffectiveUser()
 
 		noReset, _ := cmd.Flags().GetBool("no-reset")
 		useNew, _ := cmd.Flags().GetBool("new")
@@ -117,7 +118,7 @@ var branchCmd = &cobra.Command{
 
 		// Run interactively to stream output to the user
 		argv := []string{"bash", "-lc", script}
-		if err := docker.ExecInteractive(name, workdir, nil, argv); err != nil {
+		if err := docker.ExecInteractive(name, workdir, user, nil, argv); err != nil {
 			return fmt.Errorf("container: failed to checkout branch and migrate: %w", err)
 		}
 		return nil

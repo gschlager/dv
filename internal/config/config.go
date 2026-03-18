@@ -87,6 +87,33 @@ type ImageConfig struct {
 	Workdir       string      `json:"workdir"`
 	ContainerPort int         `json:"containerPort"`
 	Dockerfile    ImageSource `json:"dockerfile"`
+	// User is the container user for exec/chown operations. Empty means "discourse".
+	User string `json:"user,omitempty"`
+	// Command overrides the container entrypoint command.
+	// For custom images, defaults to ["sleep", "infinity"] to keep the container alive.
+	Command []string `json:"command,omitempty"`
+}
+
+// ContainerCommand returns the command to run in the container.
+// For custom images, defaults to ["sleep", "infinity"] to keep the container alive.
+// Returns nil for discourse images (they have their own entrypoint).
+func (img ImageConfig) ContainerCommand() []string {
+	if len(img.Command) > 0 {
+		return img.Command
+	}
+	if img.Kind != "discourse" {
+		return []string{"sleep", "infinity"}
+	}
+	return nil
+}
+
+// EffectiveUser returns the runtime user for container exec and chown operations.
+// Returns User if set, otherwise "discourse" for backward compatibility.
+func (img ImageConfig) EffectiveUser() string {
+	if u := strings.TrimSpace(img.User); u != "" {
+		return u
+	}
+	return "discourse"
 }
 
 type LocalProxyConfig struct {

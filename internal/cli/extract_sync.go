@@ -27,6 +27,7 @@ import (
 type syncOptions struct {
 	containerName    string
 	containerWorkdir string
+	user             string
 	localRepo        string
 	logOut           io.Writer
 	errOut           io.Writer
@@ -80,6 +81,7 @@ type extractSync struct {
 	cancel        context.CancelFunc
 	containerName string
 	workdir       string
+	user          string
 	localRepo     string
 	logOut        io.Writer
 	errOut        io.Writer
@@ -124,6 +126,7 @@ func runExtractSync(cmd *cobra.Command, opts syncOptions) error {
 		cancel:        cancel,
 		containerName: opts.containerName,
 		workdir:       opts.containerWorkdir,
+		user:          opts.user,
 		localRepo:     opts.localRepo,
 		logOut:        opts.logOut,
 		errOut:        opts.errOut,
@@ -136,7 +139,7 @@ func runExtractSync(cmd *cobra.Command, opts syncOptions) error {
 	defer cancel()
 
 	// Initialize git syncer
-	s.gitSyncer = newGitSyncer(ctx, opts.containerName, opts.containerWorkdir, opts.localRepo, opts.logOut, opts.errOut, opts.debug)
+	s.gitSyncer = newGitSyncer(ctx, opts.containerName, opts.containerWorkdir, opts.user, opts.localRepo, opts.logOut, opts.errOut, opts.debug)
 
 	if err := s.ensureInotify(); err != nil {
 		return err
@@ -228,7 +231,7 @@ func (s *extractSync) runHostWatcher() error {
 }
 
 func (s *extractSync) runContainerWatcher() error {
-	args := []string{"exec", "--user", "discourse", "-w", s.workdir, s.containerName,
+	args := []string{"exec", "--user", s.user, "-w", s.workdir, s.containerName,
 		"inotifywait", "-m", "-r",
 		"-e", "modify", "-e", "create", "-e", "delete", "-e", "move",
 		"--format", "%w%f|%e", "--exclude", "(^|/)\\.git(/|$)", "."}
@@ -632,7 +635,7 @@ func (s *extractSync) processHostChanges(ctx context.Context, paths []string) er
 			// File was deleted on host, remove from container if it exists there
 			// This handles both tracked and untracked file deletions
 			checkCmd := []string{"bash", "-lc", fmt.Sprintf("test -e %s && echo exists", shellQuote(rel))}
-			out, _ := dockerExecOutput(ctx, s.containerName, s.workdir, nil, checkCmd)
+			out, _ := dockerExecOutput(ctx, s.containerName, s.workdir, s.user, nil, checkCmd)
 			if strings.Contains(out, "exists") {
 				// Check if file is gitignored - don't sync gitignored files
 				ignored, _ := s.isGitIgnored(ctx, s.localRepo, rel)
@@ -708,7 +711,7 @@ func (s *extractSync) processContainerChanges(ctx context.Context, paths []strin
 	s.debugf("container events: %s", strings.Join(paths, ", "))
 
 	// Ask git about these paths - it will filter out gitignored files
-	entries, err := gitStatusPorcelainContainer(ctx, s.containerName, s.workdir, paths)
+	entries, err := gitStatusPorcelainContainer(ctx, s.containerName, s.workdir, s.user, paths)
 	if err != nil {
 		return err
 	}
@@ -795,7 +798,7 @@ func (s *extractSync) processContainerChanges(ctx context.Context, paths []strin
 
 		// Check if file exists in container
 		checkCmd := []string{"bash", "-lc", fmt.Sprintf("test -e %s && echo exists", shellQuote(rel))}
-		out, _ := dockerExecOutput(ctx, s.containerName, s.workdir, nil, checkCmd)
+		out, _ := dockerExecOutput(ctx, s.containerName, s.workdir, s.user, nil, checkCmd)
 		containerExists := strings.Contains(out, "exists")
 
 		if !containerExists {
@@ -1011,7 +1014,7 @@ func (s *extractSync) performGitSync() error {
 }
 
 func (s *extractSync) collectContainerChanges(ctx context.Context) ([]trackedChange, error) {
-	entries, err := gitStatusPorcelainContainer(ctx, s.containerName, s.workdir, nil)
+	entries, err := gitStatusPorcelainContainer(ctx, s.containerName, s.workdir, s.user, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1164,13 +1167,13 @@ func gitStatusPorcelainHost(ctx context.Context, repo string, paths []string) ([
 	return parseStatusOutput(string(out)), nil
 }
 
-func gitStatusPorcelainContainer(ctx context.Context, name, workdir string, paths []string) ([]statusEntry, error) {
+func gitStatusPorcelainContainer(ctx context.Context, name, workdir, user string, paths []string) ([]statusEntry, error) {
 	args := []string{"git", "-c", "core.quotePath=false", "status", "--porcelain"}
 	if len(paths) > 0 {
 		args = append(args, "--")
 		args = append(args, paths...)
 	}
-	out, err := dockerExecOutput(ctx, name, workdir, nil, args)
+	out, err := dockerExecOutput(ctx, name, workdir, user, nil, args)
 	if err != nil {
 		return nil, fmt.Errorf("git status (container): %w: %s", err, strings.TrimSpace(out))
 	}
@@ -1272,7 +1275,7 @@ func (s *extractSync) hostHash(ctx context.Context, rel string) (string, error) 
 func (s *extractSync) containerHash(ctx context.Context, rel string) (string, error) {
 	// First check if file exists in container
 	checkCmd := []string{"bash", "-lc", fmt.Sprintf("test -e %s && echo exists", shellQuote(rel))}
-	out, _ := dockerExecOutput(ctx, s.containerName, s.workdir, nil, checkCmd)
+	out, _ := dockerExecOutput(ctx, s.containerName, s.workdir, s.user, nil, checkCmd)
 	if !strings.Contains(out, "exists") {
 		// File doesn't exist in container
 		return "", nil
@@ -1280,7 +1283,7 @@ func (s *extractSync) containerHash(ctx context.Context, rel string) (string, er
 
 	// File exists, get its hash
 	args := []string{"git", "hash-object", "--", rel}
-	out, err := dockerExecOutput(ctx, s.containerName, s.workdir, nil, args)
+	out, err := dockerExecOutput(ctx, s.containerName, s.workdir, s.user, nil, args)
 	if err != nil {
 		msg := strings.TrimSpace(out)
 		if strings.Contains(msg, "does not exist") || strings.Contains(msg, "No such file") {
@@ -1314,7 +1317,7 @@ func (s *extractSync) copyHostToContainer(ctx context.Context, rel string) error
 	if err := s.ensureContainerDir(ctx, path.Dir(rel)); err != nil {
 		return err
 	}
-	if err := dockerCopyToContainerWithOwnership(ctx, s.containerName, hostPath, destDir, false); err != nil {
+	if err := dockerCopyToContainerWithOwnership(ctx, s.containerName, hostPath, destDir, s.user, false); err != nil {
 		// The file may have vanished between the initial stat and docker reading it.
 		if _, statErr := os.Stat(hostPath); errors.Is(statErr, os.ErrNotExist) {
 			return errSyncSkipped
@@ -1338,7 +1341,7 @@ func (s *extractSync) copyContainerToHost(ctx context.Context, rel string) error
 	if err := dockerCopyFromContainer(ctx, s.containerName, containerPath, hostPath); err != nil {
 		// The file may have vanished between event delivery and copying.
 		checkCmd := []string{"bash", "-lc", fmt.Sprintf("test -e %s && echo exists", shellQuote(rel))}
-		out, _ := dockerExecOutput(ctx, s.containerName, s.workdir, nil, checkCmd)
+		out, _ := dockerExecOutput(ctx, s.containerName, s.workdir, s.user, nil, checkCmd)
 		if !strings.Contains(out, "exists") {
 			return errSyncSkipped
 		}
@@ -1349,7 +1352,7 @@ func (s *extractSync) copyContainerToHost(ctx context.Context, rel string) error
 
 func (s *extractSync) removeInContainer(ctx context.Context, rel string) error {
 	cmd := []string{"bash", "-lc", "rm -rf -- " + shellQuote(rel)}
-	if _, err := dockerExecOutput(ctx, s.containerName, s.workdir, nil, cmd); err != nil {
+	if _, err := dockerExecOutput(ctx, s.containerName, s.workdir, s.user, nil, cmd); err != nil {
 		return fmt.Errorf("container remove %s: %w", rel, err)
 	}
 	return nil
@@ -1377,7 +1380,7 @@ func (s *extractSync) ensureContainerDir(ctx context.Context, rel string) error 
 		return nil
 	}
 	cmd := []string{"bash", "-lc", "mkdir -p " + shellQuote(rel)}
-	if _, err := dockerExecOutput(ctx, s.containerName, s.workdir, nil, cmd); err != nil {
+	if _, err := dockerExecOutput(ctx, s.containerName, s.workdir, s.user, nil, cmd); err != nil {
 		return fmt.Errorf("container mkdir %s: %w", rel, err)
 	}
 	return nil
@@ -1429,7 +1432,7 @@ func (s *extractSync) relativeFromContainer(abs string) (string, bool) {
 }
 
 func (s *extractSync) ensureInotify() error {
-	out, err := dockerExecOutput(s.ctx, s.containerName, s.workdir, nil, []string{"bash", "-lc", "command -v inotifywait"})
+	out, err := dockerExecOutput(s.ctx, s.containerName, s.workdir, s.user, nil, []string{"bash", "-lc", "command -v inotifywait"})
 	trimmed := strings.TrimSpace(out)
 	if err != nil {
 		if trimmed == "" {
@@ -1509,7 +1512,7 @@ func (s *extractSync) isGitIgnored(ctx context.Context, repoDir, relPath string)
 }
 
 func (s *extractSync) isGitIgnoredInContainer(ctx context.Context, relPath string) (bool, error) {
-	_, err := dockerExecOutput(ctx, s.containerName, s.workdir, nil, []string{"git", "check-ignore", "-q", relPath})
+	_, err := dockerExecOutput(ctx, s.containerName, s.workdir, s.user, nil, []string{"git", "check-ignore", "-q", relPath})
 	if err == nil {
 		// Exit code 0 means file IS ignored
 		return true, nil
@@ -1542,7 +1545,7 @@ func (s *extractSync) isTrackedByGitInContainer(ctx context.Context, relPath str
 	}
 
 	// Not ignored, check if file is tracked
-	out, err := dockerExecOutput(ctx, s.containerName, s.workdir, nil, []string{"git", "ls-files", "--", relPath})
+	out, err := dockerExecOutput(ctx, s.containerName, s.workdir, s.user, nil, []string{"git", "ls-files", "--", relPath})
 	if err != nil {
 		return false, nil // Not tracked or error
 	}

@@ -186,7 +186,7 @@ func runAgentUpdateStep(cmd *cobra.Command, containerName, workdir string, step 
 	if step.runAsRoot {
 		err = docker.ExecInteractiveAsRoot(containerName, workdir, nil, argv)
 	} else {
-		err = docker.ExecInteractive(containerName, workdir, nil, argv)
+		err = docker.ExecInteractive(containerName, workdir, "discourse", nil, argv)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to update %s: %w", step.label, err)

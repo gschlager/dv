@@ -3,7 +3,7 @@ package cli
 import "testing"
 
 func TestBuildAgentArgsCodexIncludesSearchBeforeExec(t *testing.T) {
-	args := buildAgentArgs("codex", "abc")
+	args := buildAgentArgs("codex", "abc", "discourse")
 
 	if len(args) == 0 || args[0] != "codex" {
 		t.Fatalf("unexpected argv: %v", args)

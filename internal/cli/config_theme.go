@@ -35,6 +35,7 @@ type themeCommandContext struct {
 	dataDir       string
 	verbose       bool
 	envs          docker.Envs
+	user          string
 }
 
 func (ctx themeCommandContext) hostMirrorPath(slug string) string {
@@ -123,6 +124,7 @@ theme root so AI tooling understands the layout.`,
 			dataDir:       dataDir,
 			verbose:       verboseFlag,
 			envs:          collectEnvPassthrough(cfg),
+			user:          imgCfg.EffectiveUser(),
 		}
 
 		themeNameFlag, _ := cmd.Flags().GetString("theme-name")
@@ -227,7 +229,7 @@ func handleThemeClone(cmd *cobra.Command, ctx themeCommandContext, theme templat
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Cloning %s into %s...\n", repoURL, themePath)
 	cloneScript := fmt.Sprintf("git clone %s %s", shellQuote(repoURL), shellQuote(themePath))
-	if out, err := docker.ExecOutput(ctx.containerName, ctx.discourseRoot, nil, []string{"bash", "-lc", cloneScript}); err != nil {
+	if out, err := docker.ExecOutput(ctx.containerName, ctx.discourseRoot, ctx.user, nil, []string{"bash", "-lc", cloneScript}); err != nil {
 		if strings.TrimSpace(out) != "" {
 			fmt.Fprint(cmd.ErrOrStderr(), out)
 		}
@@ -382,7 +384,7 @@ func themeDirSlug(name string) string {
 
 func ensureContainerPathAvailable(containerName, themePath string) error {
 	script := fmt.Sprintf("if [ -e %s ]; then echo '__DV_EXISTS__'; fi", shellQuote(themePath))
-	out, err := docker.ExecOutput(containerName, "/home/discourse", nil, []string{"bash", "-lc", script})
+	out, err := docker.ExecOutput(containerName, "/home/discourse", "discourse", nil, []string{"bash", "-lc", script})
 	if err != nil {
 		return fmt.Errorf("failed to check %s: %w", themePath, err)
 	}
@@ -432,7 +434,7 @@ func scaffoldThemeIntoContainer(ctx themeCommandContext, displayName string, isC
 		return err
 	}
 
-	if err := docker.CopyToContainerWithOwnership(ctx.containerName, root, themePath, true); err != nil {
+	if err := docker.CopyToContainerWithOwnership(ctx.containerName, root, themePath, ctx.user, true); err != nil {
 		return err
 	}
 	return nil
@@ -469,7 +471,7 @@ func writeAgentFileToContainer(ctx themeCommandContext, themePath, displayName, 
 	}
 
 	agentPath := path.Join(themePath, "AGENTS.md")
-	if err := docker.CopyToContainerWithOwnership(ctx.containerName, tmpFile.Name(), agentPath, false); err != nil {
+	if err := docker.CopyToContainerWithOwnership(ctx.containerName, tmpFile.Name(), agentPath, ctx.user, false); err != nil {
 		return err
 	}
 	return nil
@@ -488,7 +490,7 @@ if git init >/dev/null 2>&1; then
 fi
 exit 1
 `
-	out, err := docker.ExecOutput(ctx.containerName, themePath, nil, []string{"bash", "-lc", script})
+	out, err := docker.ExecOutput(ctx.containerName, themePath, ctx.user, nil, []string{"bash", "-lc", script})
 	if err != nil {
 		trimmed := strings.TrimSpace(out)
 		if trimmed != "" {
@@ -569,7 +571,7 @@ func writeThemeSkeleton(root string, payload themeSkeletonPayload) error {
 func detectComponentFlag(ctx themeCommandContext, themePath string) (bool, error) {
 	aboutPath := path.Join(themePath, "about.json")
 	script := fmt.Sprintf("if [ -f %s ]; then cat %s; fi", shellQuote(aboutPath), shellQuote(aboutPath))
-	out, err := docker.ExecOutput(ctx.containerName, ctx.discourseRoot, nil, []string{"bash", "-lc", script})
+	out, err := docker.ExecOutput(ctx.containerName, ctx.discourseRoot, ctx.user, nil, []string{"bash", "-lc", script})
 	if err != nil {
 		return false, err
 	}
@@ -632,7 +634,7 @@ func ensureThemeWatcherScript(cmd *cobra.Command, ctx themeCommandContext) error
 		return err
 	}
 	ctx.verboseLog(cmd, "Copying watcher script into container")
-	if err := docker.CopyToContainerWithOwnership(ctx.containerName, tmpFile.Name(), themeWatcherScriptPath, false); err != nil {
+	if err := docker.CopyToContainerWithOwnership(ctx.containerName, tmpFile.Name(), themeWatcherScriptPath, ctx.user, false); err != nil {
 		return err
 	}
 	if _, err := docker.ExecAsRoot(ctx.containerName, "/", nil, []string{"chmod", "755", themeWatcherScriptPath}); err != nil {
@@ -650,6 +652,7 @@ func ensureThemeAPIKey(cmd *cobra.Command, ctx themeCommandContext, slug string)
 	key, _, err := discourse.EnsureAPIKeyForService(
 		ctx.containerName,
 		ctx.discourseRoot,
+		ctx.user,
 		description,
 		keyPath,
 		ctx.envs,
@@ -672,7 +675,7 @@ settings.api_key = ENV.fetch("DISCOURSE_API_KEY")
 `
 	cmdStr := fmt.Sprintf("THEME_DIR=%s DISCOURSE_URL=%s DISCOURSE_API_KEY=%s ruby <<'RUBY'\n%s\nRUBY", shellQuote(themePath), shellQuote(discourseURL), shellQuote(apiKey), ruby)
 	ctx.verboseLog(cmd, "Writing ~/.discourse_theme entry for %s", themePath)
-	if _, err := docker.ExecOutput(ctx.containerName, ctx.discourseRoot, nil, []string{"bash", "-lc", cmdStr}); err != nil {
+	if _, err := docker.ExecOutput(ctx.containerName, ctx.discourseRoot, ctx.user, nil, []string{"bash", "-lc", cmdStr}); err != nil {
 		return fmt.Errorf("failed to update discourse_theme config: %w", err)
 	}
 	return nil
@@ -724,7 +727,7 @@ exec chpst -u discourse:discourse -U discourse:discourse ruby "$WATCHER_BIN"
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
-	if err := docker.CopyToContainerWithOwnership(ctx.containerName, tmpFile.Name(), path.Join(serviceDir, "run"), false); err != nil {
+	if err := docker.CopyToContainerWithOwnership(ctx.containerName, tmpFile.Name(), path.Join(serviceDir, "run"), ctx.user, false); err != nil {
 		return err
 	}
 	if _, err := docker.ExecAsRoot(ctx.containerName, "/", nil, []string{"chmod", "+x", path.Join(serviceDir, "run")}); err != nil {
@@ -752,7 +755,7 @@ exec chpst -u discourse:discourse -U discourse:discourse ruby "$WATCHER_BIN"
 }
 
 func resolveInternalDiscourseURL(ctx themeCommandContext) (string, error) {
-	out, err := docker.ExecOutput(ctx.containerName, ctx.discourseRoot, nil, []string{"bash", "-lc", "echo -n ${UNICORN_PORT:-9292}"})
+	out, err := docker.ExecOutput(ctx.containerName, ctx.discourseRoot, ctx.user, nil, []string{"bash", "-lc", "echo -n ${UNICORN_PORT:-9292}"})
 	if err != nil {
 		return "", err
 	}

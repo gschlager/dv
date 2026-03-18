@@ -71,10 +71,21 @@ Examples:
 			return fmt.Errorf("cannot specify container on both source and destination")
 		}
 
+		// Helper to resolve user for a container from image config
+		resolveUser := func(containerName string) string {
+			imgName := cfg.ContainerImages[containerName]
+			if imgName != "" {
+				if imgCfg, ok := cfg.Images[imgName]; ok {
+					return imgCfg.EffectiveUser()
+				}
+			}
+			return "discourse"
+		}
+
 		if srcContainer == "" && dstContainer == "" {
 			// Default: host → selected container
 			dstContainer = currentAgentName(cfg)
-			return copyHostToContainer(src, dstPath, dstContainer, verbose)
+			return copyHostToContainer(src, dstPath, dstContainer, resolveUser(dstContainer), verbose)
 		}
 
 		if srcContainer != "" {
@@ -89,7 +100,7 @@ Examples:
 		if !docker.Running(dstContainer) {
 			return fmt.Errorf("container '%s' is not running; run 'dv start' first", dstContainer)
 		}
-		return copyHostToContainer(src, dstPath, dstContainer, verbose)
+		return copyHostToContainer(src, dstPath, dstContainer, resolveUser(dstContainer), verbose)
 	},
 }
 
@@ -104,7 +115,7 @@ func parseContainerPath(arg string) (container, path string) {
 	return arg[:idx], arg[idx+1:]
 }
 
-func copyHostToContainer(srcOnHost, dstInContainer, containerName string, verbose bool) error {
+func copyHostToContainer(srcOnHost, dstInContainer, containerName, user string, verbose bool) error {
 	// Validate source exists on host
 	if _, err := os.Stat(srcOnHost); err != nil {
 		if os.IsNotExist(err) {
@@ -113,8 +124,8 @@ func copyHostToContainer(srcOnHost, dstInContainer, containerName string, verbos
 		return fmt.Errorf("failed to stat source path: %w", err)
 	}
 
-	// Copy with recursive ownership set to discourse:discourse
-	if err := docker.CopyToContainerWithOwnership(containerName, srcOnHost, dstInContainer, true); err != nil {
+	// Copy with recursive ownership set to the configured user
+	if err := docker.CopyToContainerWithOwnership(containerName, srcOnHost, dstInContainer, user, true); err != nil {
 		return fmt.Errorf("failed to copy %s to container %s:%s: %w", srcOnHost, containerName, dstInContainer, err)
 	}
 

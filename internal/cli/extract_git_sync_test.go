@@ -64,7 +64,7 @@ func TestGitSyncer_CheckGitState(t *testing.T) {
 	var logBuf, errBuf bytes.Buffer
 	ctx := context.Background()
 
-	syncer := newGitSyncer(ctx, "fake-container", "/workdir", tmpDir, &logBuf, &errBuf, true)
+	syncer := newGitSyncer(ctx, "fake-container", "/workdir", "discourse", tmpDir, &logBuf, &errBuf, true)
 
 	// Test hostGitOutput
 	head, err := syncer.hostGitOutput("rev-parse", "HEAD")
@@ -105,7 +105,7 @@ func TestGitSyncer_HostGitOutput_DetachedHead(t *testing.T) {
 
 	var logBuf, errBuf bytes.Buffer
 	ctx := context.Background()
-	syncer := newGitSyncer(ctx, "fake-container", "/workdir", tmpDir, &logBuf, &errBuf, false)
+	syncer := newGitSyncer(ctx, "fake-container", "/workdir", "discourse", tmpDir, &logBuf, &errBuf, false)
 
 	branch, err := syncer.hostGitOutput("rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
@@ -132,7 +132,7 @@ func TestGitSyncer_HostGitOutput_EmptyRepo(t *testing.T) {
 
 	var logBuf, errBuf bytes.Buffer
 	ctx := context.Background()
-	syncer := newGitSyncer(ctx, "fake-container", "/workdir", tmpDir, &logBuf, &errBuf, false)
+	syncer := newGitSyncer(ctx, "fake-container", "/workdir", "discourse", tmpDir, &logBuf, &errBuf, false)
 
 	// rev-parse HEAD should fail in empty repo
 	_, err := syncer.hostGitOutput("rev-parse", "HEAD")
@@ -151,7 +151,7 @@ func TestGitSyncer_DebugLogging(t *testing.T) {
 	ctx := context.Background()
 
 	// With debug=true
-	syncer := newGitSyncer(ctx, "fake-container", "/workdir", tmpDir, &logBuf, &errBuf, true)
+	syncer := newGitSyncer(ctx, "fake-container", "/workdir", "discourse", tmpDir, &logBuf, &errBuf, true)
 	syncer.debugf("test message %d", 42)
 
 	if !bytes.Contains(logBuf.Bytes(), []byte("[git-sync] test message 42")) {
@@ -160,7 +160,7 @@ func TestGitSyncer_DebugLogging(t *testing.T) {
 
 	// With debug=false
 	logBuf.Reset()
-	syncer = newGitSyncer(ctx, "fake-container", "/workdir", tmpDir, &logBuf, &errBuf, false)
+	syncer = newGitSyncer(ctx, "fake-container", "/workdir", "discourse", tmpDir, &logBuf, &errBuf, false)
 	syncer.debugf("should not appear")
 
 	if logBuf.Len() > 0 {
@@ -188,7 +188,7 @@ func TestGitSyncer_ContainerIsAhead_HostCommitExists(t *testing.T) {
 
 	var logBuf, errBuf bytes.Buffer
 	ctx := context.Background()
-	syncer := newGitSyncer(ctx, "fake-container", "/workdir", tmpDir, &logBuf, &errBuf, true)
+	syncer := newGitSyncer(ctx, "fake-container", "/workdir", "discourse", tmpDir, &logBuf, &errBuf, true)
 
 	// Simulate state where container is at first commit, host is at second
 	state := gitSyncState{
@@ -220,7 +220,7 @@ func TestGitSyncer_ContainerIsAhead_ContainerCommitNotInHost(t *testing.T) {
 
 	var logBuf, errBuf bytes.Buffer
 	ctx := context.Background()
-	syncer := newGitSyncer(ctx, "fake-container", "/workdir", tmpDir, &logBuf, &errBuf, true)
+	syncer := newGitSyncer(ctx, "fake-container", "/workdir", "discourse", tmpDir, &logBuf, &errBuf, true)
 
 	// Use a SHA that definitely doesn't exist in the repo
 	state := gitSyncState{
@@ -305,7 +305,7 @@ func TestSyncFromContainer_NoCommonAncestor(t *testing.T) {
 	// Call syncFromContainer - it should fail because there's no origin/* refs
 	// The function will try to resolve origin/main, origin/master, origin/HEAD
 	// and fail before attempting any Docker operations
-	err := syncFromContainer(ctx, "fake-container", "/workdir", tmpDir, "abc123", &logBuf, false)
+	err := syncFromContainer(ctx, "fake-container", "/workdir", "discourse", tmpDir, "abc123", &logBuf, false)
 
 	if err == nil {
 		t.Error("expected error when no common ancestor exists")
@@ -330,7 +330,7 @@ func TestSyncFromContainer_DebugLogging(t *testing.T) {
 	ctx := context.Background()
 
 	// With debug=true, should see logging even in error path
-	_ = syncFromContainer(ctx, "fake-container", "/workdir", tmpDir, "abc123", &logBuf, true)
+	_ = syncFromContainer(ctx, "fake-container", "/workdir", "discourse", tmpDir, "abc123", &logBuf, true)
 
 	// The function won't log anything in the no-common-ancestor path since it
 	// fails before finding any ancestor to log about. This test just validates
@@ -360,7 +360,7 @@ func TestSyncFromContainer_WithOriginRef(t *testing.T) {
 
 	// Call syncFromContainer - it will fail because Docker operations fail
 	// when trying to check if origin/main exists in the (nonexistent) container
-	err := syncFromContainer(ctx, "fake-container", "/workdir", tmpDir, "abc123", &logBuf, true)
+	err := syncFromContainer(ctx, "fake-container", "/workdir", "discourse", tmpDir, "abc123", &logBuf, true)
 
 	// Should fail - the Docker call to check for origin/main in container fails
 	if err == nil {
