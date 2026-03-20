@@ -217,3 +217,59 @@ func buildDiscourseDatabaseResetScript() string {
 
 	return strings.Join(lines, "\n")
 }
+
+// buildProjectResetScript generates a lifecycle script from project config hooks.
+// It stops services, runs checkout + post_checkout commands, then restarts services on exit.
+func buildProjectResetScript(checkoutCmds, postCheckout, services []string) string {
+	lines := []string{"set -euo pipefail"}
+	lines = append(lines, projectServiceTrap(services)...)
+	lines = append(lines, projectStopServices(services)...)
+	lines = append(lines, checkoutCmds...)
+	lines = append(lines, postCheckout...)
+	return strings.Join(lines, "\n")
+}
+
+// buildProjectDatabaseResetScript generates a DB reset script from project lifecycle hooks.
+func buildProjectDatabaseResetScript(resetDB, services []string) string {
+	lines := []string{"set -euo pipefail"}
+	lines = append(lines, projectServiceTrap(services)...)
+	lines = append(lines, projectStopServices(services)...)
+	lines = append(lines, resetDB...)
+	return strings.Join(lines, "\n")
+}
+
+// buildProjectCatchupScript generates a catchup script from project lifecycle hooks.
+func buildProjectCatchupScript(catchup, services []string) string {
+	lines := []string{"set -euo pipefail"}
+	lines = append(lines, projectServiceTrap(services)...)
+	lines = append(lines, projectStopServices(services)...)
+	lines = append(lines, catchup...)
+	return strings.Join(lines, "\n")
+}
+
+// projectServiceTrap generates a trap that restarts services on exit.
+func projectServiceTrap(services []string) []string {
+	if len(services) == 0 {
+		return nil
+	}
+	var restartCmds []string
+	for _, svc := range services {
+		restartCmds = append(restartCmds, fmt.Sprintf("sudo sv start %s || true", shellQuote(svc)))
+	}
+	return []string{
+		fmt.Sprintf("cleanup() { echo 'Restarting services...'; %s; }", strings.Join(restartCmds, "; ")),
+		"trap cleanup EXIT",
+	}
+}
+
+// projectStopServices generates commands to stop services.
+func projectStopServices(services []string) []string {
+	if len(services) == 0 {
+		return nil
+	}
+	lines := []string{"echo 'Stopping services...'"}
+	for _, svc := range services {
+		lines = append(lines, fmt.Sprintf("sudo sv force-stop %s || true", shellQuote(svc)))
+	}
+	return lines
+}

@@ -122,11 +122,40 @@ func getenv(keys ...string) []string {
 	return out
 }
 
+var (
+	projectConfigOnce sync.Once
+	cachedPC          *config.ProjectConfig
+	cachedRoot        string
+	cachedPCErr       error
+)
+
+func findProjectConfigCached() (*config.ProjectConfig, string, error) {
+	projectConfigOnce.Do(func() {
+		cwd, err := os.Getwd()
+		if err != nil {
+			cachedPCErr = err
+			return
+		}
+		cachedPC, cachedRoot, cachedPCErr = config.FindProjectConfig(cwd)
+	})
+	return cachedPC, cachedRoot, cachedPCErr
+}
+
+func activeProjectConfig() (*config.ProjectConfig, string) {
+	pc, root, _ := findProjectConfigCached()
+	return pc, root
+}
+
 // resolveImage returns the image name and config, given an optional override name.
-// If override is empty, the currently selected image is used.
+// If override is empty, project config is checked first, then the selected image.
 func resolveImage(cfg config.Config, override string) (string, config.ImageConfig, error) {
 	name := override
 	if name == "" {
+		// Check project config first
+		if pc, root, err := findProjectConfigCached(); err == nil && pc != nil {
+			imgCfg := pc.ToImageConfig(root)
+			return imgCfg.Tag, imgCfg, nil
+		}
 		name = cfg.SelectedImage
 	}
 	img, ok := cfg.Images[name]
@@ -134,6 +163,33 @@ func resolveImage(cfg config.Config, override string) (string, config.ImageConfi
 		return "", config.ImageConfig{}, fmt.Errorf("unknown image '%s'", name)
 	}
 	return name, img, nil
+}
+
+// requireLifecycleSupport checks whether the given image supports a lifecycle hook.
+// For discourse kind, it returns (nil, nil) — the built-in lifecycle applies.
+// For custom kind, it checks the project config for the named hook.
+// Returns (projectConfig, nil) when the hook is defined; error otherwise.
+func requireLifecycleSupport(imgCfg config.ImageConfig, hookName string) (*config.ProjectConfig, error) {
+	if imgCfg.Kind == "discourse" {
+		return nil, nil
+	}
+	pc, _ := activeProjectConfig()
+	if pc == nil {
+		return nil, fmt.Errorf("no project config found; this command requires a .dv/config.yaml with lifecycle.%s", hookName)
+	}
+	var hooks []string
+	switch hookName {
+	case "post_checkout":
+		hooks = pc.Lifecycle.PostCheckout
+	case "reset_db":
+		hooks = pc.Lifecycle.ResetDB
+	case "catchup":
+		hooks = pc.Lifecycle.Catchup
+	}
+	if len(hooks) == 0 {
+		return nil, fmt.Errorf("project config has no lifecycle.%s hooks defined", hookName)
+	}
+	return pc, nil
 }
 
 // isPortInUse returns true when the given TCP port cannot be bound on localhost

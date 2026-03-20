@@ -44,22 +44,50 @@ func catchupRunE(cmd *cobra.Command, args []string) error {
 	}
 
 	imgName := cfg.ContainerImages[name]
-	if imgName == "" {
-		return fmt.Errorf("container '%s' has no image mapping in config; cannot determine image kind", name)
-	}
-	imgCfg, ok := cfg.Images[imgName]
-	if !ok {
-		return fmt.Errorf("image '%s' (mapped from container '%s') not found in config", imgName, name)
+	var imgCfg config.ImageConfig
+	if imgName != "" {
+		imgCfg = cfg.Images[imgName]
+	} else {
+		_, imgCfg, err = resolveImage(cfg, "")
+		if err != nil {
+			return err
+		}
 	}
 	workdir := imgCfg.Workdir
 	if strings.TrimSpace(workdir) == "" {
 		workdir = "/var/www/discourse"
 	}
-	if imgCfg.Kind != "discourse" {
-		return fmt.Errorf("'dv catchup' is only supported for discourse image kind; current: %q", imgCfg.Kind)
+	pc, err := requireLifecycleSupport(imgCfg, "catchup")
+	if err != nil {
+		return fmt.Errorf("'dv catchup': %w", err)
 	}
 	user := imgCfg.EffectiveUser()
 
+	if pc != nil {
+		// Project config catchup — simpler flow, no plugin discovery
+		skipConfirm, _ := cmd.Flags().GetBool("yes")
+		if !skipConfirm {
+			fmt.Fprintln(cmd.OutOrStdout(), "This will run the project catchup hooks.")
+			fmt.Fprintln(cmd.OutOrStdout(), "")
+			yes, err := promptYesNo(cmd.InOrStdin(), cmd.OutOrStdout(), "Continue? (y/N): ")
+			if err != nil {
+				return err
+			}
+			if !yes {
+				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
+				return nil
+			}
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Catching up in container '%s'...\n", name)
+		script := buildProjectCatchupScript(pc.Lifecycle.Catchup, pc.Services)
+		argv := []string{"bash", "-lc", script}
+		if err := docker.ExecInteractive(name, workdir, user, nil, argv); err != nil {
+			return fmt.Errorf("container: catchup failed: %w", err)
+		}
+		return nil
+	}
+
+	// Discourse built-in catchup
 	// Discover plugins with their own git repos
 	findScript := "find plugins -maxdepth 2 -name .git -type d 2>/dev/null | sed 's|/.git$||' | sort"
 	pluginOutput, err := docker.ExecOutput(name, workdir, user, nil, []string{"bash", "-c", findScript})

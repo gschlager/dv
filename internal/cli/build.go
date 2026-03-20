@@ -87,8 +87,9 @@ var buildCmd = &cobra.Command{
 			_ = docker.Remove(cfg.DefaultContainer)
 		}
 
+		explicitTarget := len(args) == 1 && strings.TrimSpace(args[0]) != ""
 		target := cfg.SelectedImage
-		if len(args) == 1 && strings.TrimSpace(args[0]) != "" {
+		if explicitTarget {
 			target = args[0]
 		}
 
@@ -108,9 +109,21 @@ var buildCmd = &cobra.Command{
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Using local Dockerfile: %s\n", dockerfilePath)
 		} else {
-			// Case 2: target is a configured image name or stock keyword
+			// Case 2: target is a configured image name, stock keyword, or project config
 			imgName := target
-			img, ok := cfg.Images[imgName]
+			var img config.ImageConfig
+			var ok bool
+
+			// Project config takes priority when no explicit target was given
+			if !explicitTarget {
+				if pc, root, pcErr := findProjectConfigCached(); pcErr == nil && pc != nil {
+					img = pc.ToImageConfig(root)
+					ok = true
+				}
+			}
+			if !ok {
+				img, ok = cfg.Images[imgName]
+			}
 			if !ok {
 				// Allow stock keyword without pre-adding
 				if imgName == "discourse" {

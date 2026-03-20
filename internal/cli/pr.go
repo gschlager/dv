@@ -95,8 +95,9 @@ var prCmd = &cobra.Command{
 		if strings.TrimSpace(workdir) == "" {
 			workdir = "/var/www/discourse"
 		}
-		if imgCfg.Kind != "discourse" {
-			return fmt.Errorf("'dv pr' is only supported for discourse image kind; current: %q", imgCfg.Kind)
+		pc, err := requireLifecycleSupport(imgCfg, "post_checkout")
+		if err != nil {
+			return fmt.Errorf("'dv pr': %w", err)
 		}
 
 		// Determine owner/repo for fetching PR details
@@ -125,9 +126,14 @@ var prCmd = &cobra.Command{
 
 		fmt.Fprintf(cmd.OutOrStdout(), "Checking out PR #%d (%s) in container '%s'...\n", prNumber, branchName, name)
 
-		// Build shell script to fetch and checkout PR branch using the actual branch name
+		// Build shell script — use project lifecycle if available, else Discourse built-in
 		checkoutCmds := buildPRCheckoutCommands(prNumber, branchName)
-		script := buildDiscourseResetScript(checkoutCmds, discourseResetScriptOpts{SkipDBReset: noReset})
+		var script string
+		if pc != nil {
+			script = buildProjectResetScript(checkoutCmds, pc.Lifecycle.PostCheckout, pc.Services)
+		} else {
+			script = buildDiscourseResetScript(checkoutCmds, discourseResetScriptOpts{SkipDBReset: noReset})
+		}
 
 		// Run interactively to stream output to the user
 		argv := []string{"bash", "-lc", script}

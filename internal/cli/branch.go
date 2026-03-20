@@ -85,8 +85,9 @@ var branchCmd = &cobra.Command{
 		if strings.TrimSpace(workdir) == "" {
 			workdir = "/var/www/discourse"
 		}
-		if imgCfg.Kind != "discourse" {
-			return fmt.Errorf("'dv branch' is only supported for discourse image kind; current: %q", imgCfg.Kind)
+		pc, err := requireLifecycleSupport(imgCfg, "post_checkout")
+		if err != nil {
+			return fmt.Errorf("'dv branch': %w", err)
 		}
 		user := imgCfg.EffectiveUser()
 
@@ -113,8 +114,13 @@ var branchCmd = &cobra.Command{
 			checkoutCmds = buildBranchCheckoutCommands(branchName)
 		}
 
-		// Build shell script to checkout branch safely
-		script := buildDiscourseResetScript(checkoutCmds, discourseResetScriptOpts{SkipDBReset: noReset})
+		// Build shell script — use project lifecycle if available, else Discourse built-in
+		var script string
+		if pc != nil {
+			script = buildProjectResetScript(checkoutCmds, pc.Lifecycle.PostCheckout, pc.Services)
+		} else {
+			script = buildDiscourseResetScript(checkoutCmds, discourseResetScriptOpts{SkipDBReset: noReset})
+		}
 
 		// Run interactively to stream output to the user
 		argv := []string{"bash", "-lc", script}

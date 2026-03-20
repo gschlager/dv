@@ -73,13 +73,19 @@ func resetDbRunE(cmd *cobra.Command, args []string) error {
 	if strings.TrimSpace(workdir) == "" {
 		workdir = "/var/www/discourse"
 	}
-	if imgCfg.Kind != "discourse" {
-		return fmt.Errorf("'dv reset' is only supported for discourse image kind; current: %q", imgCfg.Kind)
+	pc, err := requireLifecycleSupport(imgCfg, "reset_db")
+	if err != nil {
+		return fmt.Errorf("'dv reset': %w", err)
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Resetting databases in container '%s'...\n", name)
 
-	script := buildDiscourseDatabaseResetScript()
+	var script string
+	if pc != nil {
+		script = buildProjectDatabaseResetScript(pc.Lifecycle.ResetDB, pc.Services)
+	} else {
+		script = buildDiscourseDatabaseResetScript()
+	}
 	argv := []string{"bash", "-lc", script}
 	if err := docker.ExecInteractive(name, workdir, imgCfg.EffectiveUser(), nil, argv); err != nil {
 		return fmt.Errorf("container: failed to reset databases: %w", err)
@@ -127,13 +133,19 @@ func resetGitRunE(cmd *cobra.Command, args []string) error {
 	if strings.TrimSpace(workdir) == "" {
 		workdir = "/var/www/discourse"
 	}
-	if imgCfg.Kind != "discourse" {
-		return fmt.Errorf("'dv reset git' is only supported for discourse image kind; current: %q", imgCfg.Kind)
+	pc, err := requireLifecycleSupport(imgCfg, "post_checkout")
+	if err != nil {
+		return fmt.Errorf("'dv reset git': %w", err)
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Resetting git and migrating in container '%s'...\n", name)
 
-	script := buildDiscourseResetScript(buildCurrentBranchResetCommands(), discourseResetScriptOpts{})
+	var script string
+	if pc != nil {
+		script = buildProjectResetScript(buildCurrentBranchResetCommands(), pc.Lifecycle.PostCheckout, pc.Services)
+	} else {
+		script = buildDiscourseResetScript(buildCurrentBranchResetCommands(), discourseResetScriptOpts{})
+	}
 	argv := []string{"bash", "-lc", script}
 	if err := docker.ExecInteractive(name, workdir, imgCfg.EffectiveUser(), nil, argv); err != nil {
 		return fmt.Errorf("container: failed to reset git: %w", err)

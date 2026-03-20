@@ -85,7 +85,11 @@ func prepareContainerExecContext(cmd *cobra.Command, overrideName ...string) (co
 
 func copyConfiguredFiles(cmd *cobra.Command, cfg config.Config, containerName, workdir, user, agent string) {
 	agent = strings.ToLower(strings.TrimSpace(agent))
-	for _, rule := range cfg.CopyRules {
+	rules := cfg.CopyRules
+	if pc, _ := activeProjectConfig(); pc != nil && len(pc.CopyRules) > 0 {
+		rules = append(rules, pc.CopyRules...)
+	}
+	for _, rule := range rules {
 		if !ruleMatchesAgent(rule, agent) {
 			continue
 		}
@@ -316,13 +320,40 @@ func deepMerge(dst, src map[string]any, mergeKey string) map[string]any {
 }
 
 func collectEnvPassthrough(cfg config.Config) docker.Envs {
-	envs := make(docker.Envs, 0, len(cfg.EnvPassthrough)+len(cfg.Env)+1)
-	for _, key := range cfg.EnvPassthrough {
+	passKeys := cfg.EnvPassthrough
+	envMap := cfg.Env
+
+	// Merge from project config
+	if pc, _ := activeProjectConfig(); pc != nil {
+		seen := map[string]bool{}
+		for _, k := range passKeys {
+			seen[k] = true
+		}
+		for _, k := range pc.EnvPassthrough {
+			if !seen[k] {
+				passKeys = append(passKeys, k)
+			}
+		}
+		if len(pc.Env) > 0 {
+			merged := make(map[string]string)
+			for k, v := range envMap {
+				merged[k] = v
+			}
+			for k, v := range pc.Env {
+				merged[k] = v
+			}
+			envMap = merged
+		}
+	}
+
+	envs := make(docker.Envs, 0, len(passKeys)+len(envMap)+1)
+	for _, key := range passKeys {
 		if val, ok := os.LookupEnv(key); ok && val != "" {
+			_ = val
 			envs = append(envs, key)
 		}
 	}
-	for k, v := range cfg.Env {
+	for k, v := range envMap {
 		envs = append(envs, k+"="+v)
 	}
 	return envs

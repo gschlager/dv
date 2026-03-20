@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -47,10 +48,18 @@ var startCmd = &cobra.Command{
 		hostPort, _ := cmd.Flags().GetInt("host-starting-port")
 		containerPort, _ := cmd.Flags().GetInt("container-port")
 		if hostPort == 0 {
-			hostPort = cfg.HostStartingPort
+			if pc, _ := activeProjectConfig(); pc != nil && pc.HostStartingPort > 0 {
+				hostPort = pc.HostStartingPort
+			} else {
+				hostPort = cfg.HostStartingPort
+			}
 		}
 		if containerPort == 0 {
-			containerPort = cfg.ContainerPort
+			if pc, _ := activeProjectConfig(); pc != nil && pc.Image.ContainerPort > 0 {
+				containerPort = pc.Image.ContainerPort
+			} else {
+				containerPort = cfg.ContainerPort
+			}
 		}
 
 		// Determine which image and workdir to use from image selection
@@ -80,8 +89,27 @@ var startCmd = &cobra.Command{
 		if imgCfg.Kind == "discourse" {
 			dockerArgs = docker.DiscourseSysctlArgs()
 		}
+		containerCmd := imgCfg.ContainerCommand()
+
+		// Opt-in bind mounts from project config
+		var volumes []string
+		if pc, _ := activeProjectConfig(); pc != nil {
+			volumes = pc.Volumes
+		}
 
 		if !docker.Exists(name) {
+			// Auto-build if image doesn't exist and project config is available
+			if !docker.ImageExists(imageTag) {
+				if pc, _ := activeProjectConfig(); pc != nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "Building image '%s' from project config...\n", imageTag)
+					if err := autoBuildProjectImage(imgCfg, imageTag, cmd); err != nil {
+						return err
+					}
+				} else {
+					return fmt.Errorf("image '%s' does not exist; run 'dv build' first", imageTag)
+				}
+			}
+
 			// Find the first available host port, starting from hostPort
 			allocated, err := docker.AllocatedPorts()
 			if err != nil {
@@ -116,12 +144,40 @@ var startCmd = &cobra.Command{
 			if proxyHost != "" {
 				extraHosts = append(extraHosts, fmt.Sprintf("%s:127.0.0.1", proxyHost))
 			}
-			if err := docker.RunDetached(name, workdir, imageTag, chosenPort, containerPort, labels, envs, extraHosts, "", dockerArgs); err != nil {
+			if err := docker.RunDetached(name, workdir, imageTag, chosenPort, containerPort, labels, envs, extraHosts, "", dockerArgs, containerCmd, volumes); err != nil {
 				return err
 			}
 
 			// give it a moment to boot services
 			time.Sleep(500 * time.Millisecond)
+
+			// Copy project files into container (unless bind mounts are configured)
+			if pc, root := activeProjectConfig(); pc != nil && root != "" && len(pc.Volumes) == 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "Copying project into container...\n")
+				user := imgCfg.EffectiveUser()
+				// docker cp requires trailing /. to copy directory contents
+				if err := docker.CopyToContainerWithOwnership(name, root+"/.", workdir, user, true); err != nil {
+					return fmt.Errorf("failed to copy project into container: %w", err)
+				}
+			}
+
+			// Run on_create hooks from project config
+			if pc, _ := activeProjectConfig(); pc != nil && len(pc.OnCreate) > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "Running on_create hooks...\n")
+				user := imgCfg.EffectiveUser()
+				for _, hook := range pc.OnCreate {
+					fmt.Fprintf(cmd.OutOrStdout(), "  -> %s\n", hook)
+					if err := docker.ExecInteractive(name, workdir, user, nil, []string{"bash", "-lc", hook}); err != nil {
+						return fmt.Errorf("on_create hook failed: %w", err)
+					}
+				}
+			}
+
+			// Persist project image config so prepareContainerExecContext finds it
+			if _, exists := cfg.Images[imgName]; !exists {
+				cfg.Images[imgName] = imgCfg
+				overridesDirty = true
+			}
 
 			if proxyHost != "" {
 				registerWithLocalProxy(cmd, cfg, name, proxyHost, containerPort)
@@ -178,10 +234,10 @@ var startCmd = &cobra.Command{
 
 					// Recreate container with new port from snapshot
 					fmt.Fprintf(cmd.OutOrStdout(), "Recreating container with new port...\n")
-					if err := docker.RunDetached(name, existingWorkdir, tempImage, newPort, containerPort, labels, existingEnvs, nil, "", dockerArgs); err != nil {
+					if err := docker.RunDetached(name, existingWorkdir, tempImage, newPort, containerPort, labels, existingEnvs, nil, "", dockerArgs, containerCmd, volumes); err != nil {
 						// Try to restore from snapshot
 						fmt.Fprintf(cmd.ErrOrStderr(), "Failed to recreate, attempting restore...\n")
-						_ = docker.RunDetached(name, existingWorkdir, tempImage, existingPort, containerPort, labels, existingEnvs, nil, "", dockerArgs)
+						_ = docker.RunDetached(name, existingWorkdir, tempImage, existingPort, containerPort, labels, existingEnvs, nil, "", dockerArgs, containerCmd, volumes)
 						_ = docker.RemoveImage(tempImage)
 						return fmt.Errorf("failed to recreate container: %w", err)
 					}
@@ -239,4 +295,16 @@ func init() {
 	startCmd.Flags().Int("host-starting-port", 0, "First host port to try for container port mapping")
 	startCmd.Flags().Int("container-port", 0, "Container port to expose")
 	startCmd.Flags().String("image", "", "Override image to start (defaults to selected image)")
+}
+
+// autoBuildProjectImage builds a Docker image from the resolved image config.
+func autoBuildProjectImage(imgCfg config.ImageConfig, imageTag string, cmd *cobra.Command) error {
+	if imgCfg.Dockerfile.Source != "path" {
+		return fmt.Errorf("cannot auto-build image with source %q", imgCfg.Dockerfile.Source)
+	}
+	dockerfilePath := imgCfg.Dockerfile.Path
+	contextDir := filepath.Dir(imgCfg.Dockerfile.Path)
+
+	docker.PullBaseImages(dockerfilePath, cmd.OutOrStdout())
+	return docker.BuildFrom(imageTag, dockerfilePath, contextDir, docker.BuildOptions{})
 }
