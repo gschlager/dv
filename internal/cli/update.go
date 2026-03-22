@@ -62,20 +62,7 @@ var updateAgentsCmd = &cobra.Command{
 
 		fmt.Fprintf(cmd.OutOrStdout(), "Updating AI agents in container '%s'...\n", name)
 
-		steps := []agentUpdateStep{
-			{label: "OpenAI Codex CLI", command: "npm install -g @openai/codex", runAsRoot: true},
-			{label: "Google Gemini CLI", command: "npm install -g @google/gemini-cli", runAsRoot: true},
-			{label: "Crush CLI", command: "npm install -g @charmland/crush", runAsRoot: true},
-			{label: "Github CLI", command: "npm install -g @github/copilot", runAsRoot: true},
-			{label: "OpenCode AI", command: "npm install -g opencode-ai@latest", runAsRoot: true},
-			{label: "Amp CLI", command: "npm install -g @sourcegraph/amp", runAsRoot: true},
-			{label: "Claude CLI", command: "curl -fsSL https://claude.ai/install.sh | bash", useUserPaths: true},
-			{label: "Aider", command: "curl -LsSf https://aider.chat/install.sh | sh", useUserPaths: true},
-			{label: "Cursor Agent", command: "curl -fsS https://cursor.com/install | bash", useUserPaths: true},
-			{label: "Factory Droid", command: "curl -fsSL https://app.factory.ai/cli | sh", useUserPaths: true},
-			{label: "Mistral Vibe", command: "curl -LsSf https://mistral.ai/vibe/install.sh | bash", useUserPaths: true},
-			{label: "Term-LLM", command: "command -v term-llm >/dev/null && term-llm upgrade || echo 'term-llm not installed, skipping'", useUserPaths: true},
-		}
+		steps := resolveAgentSteps()
 
 		for _, step := range steps {
 			if err := runAgentUpdateStep(cmd, name, workdir, step); err != nil {
@@ -192,6 +179,29 @@ func runAgentUpdateStep(cmd *cobra.Command, containerName, workdir string, step 
 		return fmt.Errorf("failed to update %s: %w", step.label, err)
 	}
 	return nil
+}
+
+// defaultAgentSteps returns the full hardcoded list of agent update steps.
+func defaultAgentSteps() []agentUpdateStep {
+	return []agentUpdateStep{
+		{label: "OpenAI Codex CLI", command: "npm install -g @openai/codex", runAsRoot: true},
+		{label: "Google Gemini CLI", command: "npm install -g @google/gemini-cli", runAsRoot: true},
+		{label: "Crush CLI", command: "npm install -g @charmland/crush", runAsRoot: true},
+		{label: "Github CLI", command: "npm install -g @github/copilot", runAsRoot: true},
+		{label: "OpenCode AI", command: "npm install -g opencode-ai@latest", runAsRoot: true},
+		{label: "Amp CLI", command: "npm install -g @sourcegraph/amp", runAsRoot: true},
+		{label: "Claude CLI", command: "curl -fsSL https://claude.ai/install.sh | bash", useUserPaths: true},
+		{label: "Aider", command: "curl -LsSf https://aider.chat/install.sh | sh", useUserPaths: true},
+		{label: "Cursor Agent", command: "curl -fsS https://cursor.com/install | bash", useUserPaths: true},
+		{label: "Factory Droid", command: "curl -fsSL https://app.factory.ai/cli | sh", useUserPaths: true},
+		{label: "Mistral Vibe", command: "curl -LsSf https://mistral.ai/vibe/install.sh | bash", useUserPaths: true},
+		{label: "Term-LLM", command: "command -v term-llm >/dev/null && term-llm upgrade || echo 'term-llm not installed, skipping'", useUserPaths: true},
+	}
+}
+
+// resolveAgentSteps returns the agent update steps to use.
+func resolveAgentSteps() []agentUpdateStep {
+	return defaultAgentSteps()
 }
 
 func resolveImageConfig(cfg config.Config, containerName string) (config.ImageConfig, error) {

@@ -873,20 +873,7 @@ func handleContainerUpdateAgents(w http.ResponseWriter, r *http.Request, configD
 		workdir = "/var/www/discourse"
 	}
 
-	steps := []agentUpdateStep{
-		{label: "OpenAI Codex CLI", command: "npm install -g @openai/codex", runAsRoot: true},
-		{label: "Google Gemini CLI", command: "npm install -g @google/gemini-cli", runAsRoot: true},
-		{label: "Crush CLI", command: "npm install -g @charmland/crush", runAsRoot: true},
-		{label: "Github CLI", command: "npm install -g @github/copilot", runAsRoot: true},
-		{label: "OpenCode AI", command: "npm install -g opencode-ai@latest", runAsRoot: true},
-		{label: "Amp CLI", command: "npm install -g @sourcegraph/amp", runAsRoot: true},
-		{label: "Claude CLI", command: "curl -fsSL https://claude.ai/install.sh | bash", useUserPaths: true},
-		{label: "Aider", command: "curl -LsSf https://aider.chat/install.sh | sh", useUserPaths: true},
-		{label: "Cursor Agent", command: "curl -fsS https://cursor.com/install | bash", useUserPaths: true},
-		{label: "Factory Droid", command: "curl -fsSL https://app.factory.ai/cli | sh", useUserPaths: true},
-		{label: "Mistral Vibe", command: "curl -LsSf https://mistral.ai/vibe/install.sh | bash", useUserPaths: true},
-		{label: "Term-LLM", command: "command -v term-llm >/dev/null && term-llm upgrade || echo 'term-llm not installed, skipping'", useUserPaths: true},
-	}
+	steps := resolveAgentSteps()
 
 	streamSequence(w, func(sse *sseWriter) error {
 		for _, step := range steps {
