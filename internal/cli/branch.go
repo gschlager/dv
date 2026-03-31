@@ -135,7 +135,6 @@ func init() {
 	branchCmd.Flags().String("name", "", "Container name (defaults to selected or default)")
 	branchCmd.Flags().Bool("new", false, "If the branch does not exist on remote, create it from origin/main (or origin/master)")
 	branchCmd.Flags().Bool("no-reset", false, "Do not reset DB or run migrations; only checkout and reinstall deps")
-	rootCmd.AddCommand(branchCmd)
 }
 
 // listBranchesWithGitLsRemote uses git ls-remote to fetch branches matching a pattern.

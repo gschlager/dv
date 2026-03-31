@@ -9,7 +9,7 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:           "dv",
-	Short:         "Discourse Vibe: manage local Discourse dev containers",
+	Short:         "dv: manage local dev containers",
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
@@ -33,6 +33,13 @@ func addPersistentFlags(cmd *cobra.Command) {
 func init() {
 	addPersistentFlags(rootCmd)
 
+	rootCmd.AddGroup(
+		&cobra.Group{ID: "container", Title: "Container Commands:"},
+		&cobra.Group{ID: "workflow", Title: "Workflow Commands:"},
+		&cobra.Group{ID: "discourse", Title: "Discourse Commands:"},
+		&cobra.Group{ID: "tools", Title: "Tools & Configuration:"},
+	)
+
 	// Custom usage template that keeps the command list aligned by padding only the
 	// primary command name; aliases are shown after the description to avoid
 	// breaking column alignment.
@@ -44,57 +51,44 @@ Aliases:
   {{.NameAndAliases}}{{end}}{{if .HasExample}}
 
 Examples:
-{{.Example}}{{end}}{{if .HasAvailableSubCommands}}
-
-Available Commands:
-{{range .Commands}}{{if .IsAvailableCommand}}
-  {{rpad .Name .NamePadding}} {{.Short}}{{if gt (len .Aliases) 0}} (aliases: {{.Aliases}}){{end}}{{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}
+{{.Example}}{{end}}{{if .HasAvailableSubCommands}}{{range .Groups}}
+{{$gid := .ID}}
+{{.Title}}{{range $.Commands}}{{if (and (eq .GroupID $gid) .IsAvailableCommand)}}
+  {{rpad .Name $.NamePadding}} {{.Short}}{{if gt (len .Aliases) 0}} (aliases: {{.Aliases}}){{end}}{{end}}{{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}
 
 Flags:
 {{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{if .HasAvailableInheritedFlags}}
 
 Global Flags:
-{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{if .HasHelpSubCommands}}
-
-Additional help topics:
-{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
-  {{rpad .CommandPath .CommandPathPadding}} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableSubCommands}}
+{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{if .HasAvailableSubCommands}}
 
 Use "{{.CommandPath}} [command] --help" for more information about a command.{{end}}
 `)
 
-	rootCmd.AddCommand(buildCmd)
-	rootCmd.AddCommand(startCmd)
-	rootCmd.AddCommand(enterCmd)
-	rootCmd.AddCommand(runCmd)
-	rootCmd.AddCommand(runAgentCmd)
-	rootCmd.AddCommand(copyCmd)
-	rootCmd.AddCommand(stopCmd)
-	rootCmd.AddCommand(restartCmd)
-	rootCmd.AddCommand(resetCmd)
-	rootCmd.AddCommand(removeCmd)
-	rootCmd.AddCommand(exposeCmd)
-	rootCmd.AddCommand(mailCmd)
-	rootCmd.AddCommand(tuiCmd)
-	// Top-level agent management commands
-	rootCmd.AddCommand(listCmd)
-	rootCmd.AddCommand(newCmd)
-	rootCmd.AddCommand(selectCmd)
-	rootCmd.AddCommand(renameCmd)
-	rootCmd.AddCommand(extractCmd)
-	rootCmd.AddCommand(importCmd)
-	rootCmd.AddCommand(configCmd)
-	rootCmd.AddCommand(dataCmd)
-	rootCmd.AddCommand(imageCmd)
-	rootCmd.AddCommand(psCmd)
-	rootCmd.AddCommand(catchupCmd)
-	rootCmd.AddCommand(pullCmd)
-	rootCmd.AddCommand(updateCmd)
-	rootCmd.AddCommand(versionCmd)
-	rootCmd.AddCommand(serveCmd)
+	// Container lifecycle
+	addToGroup("container", buildCmd, startCmd, stopCmd, restartCmd, enterCmd,
+		runCmd, removeCmd, newCmd, listCmd, selectCmd, renameCmd, psCmd)
+
+	// Development workflow
+	addToGroup("workflow", branchCmd, prCmd, catchupCmd, resetCmd, extractCmd,
+		importCmd, copyCmd, runAgentCmd)
+
+	// Discourse-specific
+	addToGroup("discourse", mailCmd, exposeCmd)
+
+	// Tools & configuration
+	addToGroup("tools", configCmd, imageCmd, dataCmd, pullCmd, updateCmd,
+		tuiCmd, serveCmd, versionCmd)
 
 	setupUpdateChecks()
 	setupUpgradeCommand()
+}
+
+func addToGroup(group string, cmds ...*cobra.Command) {
+	for _, cmd := range cmds {
+		cmd.GroupID = group
+		rootCmd.AddCommand(cmd)
+	}
 }
 
 func exitIfErr(err error) {

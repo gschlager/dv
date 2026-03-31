@@ -33,6 +33,7 @@ var upgradeCmd = &cobra.Command{
 
 func setupUpgradeCommand() {
 	upgradeCmd.Flags().StringVar(&upgradeVersionFlag, "version", "", "Install a specific version (e.g. v0.3.0)")
+	upgradeCmd.GroupID = "tools"
 	rootCmd.AddCommand(upgradeCmd)
 }
 

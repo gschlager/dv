@@ -147,5 +147,4 @@ var prCmd = &cobra.Command{
 func init() {
 	prCmd.Flags().String("name", "", "Container name (defaults to selected or default)")
 	prCmd.Flags().Bool("no-reset", false, "Do not reset DB or run migrations; only checkout and reinstall deps")
-	rootCmd.AddCommand(prCmd)
 }
